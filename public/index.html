@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>DoH Proxy · 控制台</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <!-- 登录层 -->
+  <div id="login-view" class="login-wrap hidden">
+    <form id="login-form" class="login-card">
+      <h1>DoH Proxy 控制台</h1>
+      <p class="muted">输入 ADMIN_SECRET 登录管理后台</p>
+      <input id="login-secret" type="password" placeholder="ADMIN_SECRET" autocomplete="current-password" required />
+      <button type="submit" class="btn primary">登录</button>
+      <p id="login-error" class="error hidden"></p>
+    </form>
+  </div>
+
+  <!-- 主界面 -->
+  <div id="app-view" class="hidden">
+    <header class="topbar">
+      <div class="brand">DoH Proxy <span class="muted" id="worker-version"></span></div>
+      <nav class="tabs" id="tabs">
+        <button data-tab="dashboard" class="tab active">Dashboard</button>
+        <button data-tab="upstreams" class="tab">Upstreams</button>
+        <button data-tab="cache" class="tab">Cache &amp; Routing</button>
+        <button data-tab="ecs" class="tab">ECS</button>
+        <button data-tab="path" class="tab">自定义路径</button>
+      </nav>
+      <button id="logout-btn" class="btn ghost small">退出</button>
+    </header>
+
+    <main>
+      <!-- Dashboard -->
+      <section id="tab-dashboard" class="panel">
+        <div class="cards" id="health-cards"></div>
+
+        <div class="card">
+          <h2>DoH 接入地址</h2>
+          <div class="row">
+            <code id="doh-url" class="url-box"></code>
+            <button class="btn small" data-copy="#doh-url">复制</button>
+          </div>
+          <p class="muted">将此 URL 配置到浏览器 / 路由器 / 手机的 DoH 客户端。路径即访问凭据的一部分,请勿公开分享。</p>
+        </div>
+
+        <div class="card">
+          <h2>运行统计 <span class="muted small-note">(全局累计 · KV 异步聚合,最终一致近似值)</span></h2>
+          <div class="cards" id="stats-cards"></div>
+          <p class="muted small-note" id="isolate-note"></p>
+        </div>
+
+        <div class="card">
+          <h2>上游健康</h2>
+          <div id="upstream-health"></div>
+        </div>
+      </section>
+
+      <!-- Upstreams -->
+      <section id="tab-upstreams" class="panel hidden">
+        <div class="card">
+          <h2>上游列表</h2>
+          <div class="table-wrap">
+            <table id="upstreams-table">
+              <thead>
+                <tr>
+                  <th>名称</th><th>URL</th><th>启用</th><th>优先级</th><th>超时(ms)</th>
+                  <th>RTT(EMA)</th><th>成功率</th><th>Score</th><th>操作</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 id="upstream-form-title">添加上游</h2>
+          <form id="upstream-form" class="form-grid">
+            <label>名称 <input name="name" required placeholder="AdGuard DNS" /></label>
+            <label>URL <input name="url" required placeholder="https://dns.adguard-dns.com/dns-query" /></label>
+            <label>优先级 <input name="priority" type="number" min="1" max="1000" value="100" /></label>
+            <label>超时 ms <input name="timeout" type="number" min="100" max="10000" value="2500" /></label>
+            <label class="checkbox"><input name="enabled" type="checkbox" checked /> 启用</label>
+            <div class="form-actions">
+              <button type="submit" class="btn primary" id="upstream-submit">添加</button>
+              <button type="button" class="btn ghost hidden" id="upstream-cancel">取消编辑</button>
+            </div>
+          </form>
+          <p id="upstream-msg" class="error hidden"></p>
+        </div>
+      </section>
+
+      <!-- Cache & Routing -->
+      <section id="tab-cache" class="panel hidden">
+        <div class="card">
+          <h2>缓存参数</h2>
+          <form id="cache-form" class="form-grid">
+            <label>MIN TTL (秒) <input name="minTTL" type="number" min="0" max="86400" /></label>
+            <label>MAX TTL (秒) <input name="maxTTL" type="number" min="1" max="604800" /></label>
+            <label>STALE TTL (秒) <input name="staleTTL" type="number" min="0" max="604800" /></label>
+            <label>Jitter % <input name="jitterPercent" type="number" min="0" max="50" /></label>
+            <label>最大报文 (字节) <input name="maxBody" type="number" min="512" max="65535" /></label>
+            <label>路由模式
+              <select name="mode">
+                <option value="adaptive">adaptive(评分排序 + 竞速)</option>
+                <option value="race">race(竞速前 N)</option>
+                <option value="sequential">sequential(顺序故障转移)</option>
+              </select>
+            </label>
+            <label>Race 数量 <input name="raceCount" type="number" min="1" max="4" /></label>
+            <div class="form-actions"><button type="submit" class="btn primary">保存</button></div>
+          </form>
+          <p class="muted">SERVFAIL / REFUSED 永不缓存;NXDOMAIN / NODATA 按 SOA 负 TTL 缓存并受 MIN/MAX TTL 钳制。</p>
+        </div>
+      </section>
+
+      <!-- ECS -->
+      <section id="tab-ecs" class="panel hidden">
+        <div class="card">
+          <h2>EDNS Client Subnet</h2>
+          <form id="ecs-form" class="form-grid">
+            <label>模式
+              <select name="mode">
+                <option value="off">off(默认:剥离 ECS,缓存共享最大)</option>
+                <option value="auto">auto(从客户端 IP 截断派生)</option>
+                <option value="fixed">fixed(注入固定网段)</option>
+              </select>
+            </label>
+            <label>IPv4 前缀 <input name="ipv4Prefix" type="number" min="0" max="32" /></label>
+            <label>IPv6 前缀 <input name="ipv6Prefix" type="number" min="0" max="128" /></label>
+            <label>固定网段 (CIDR) <input name="fixedSubnet" placeholder="203.0.113.0/24" /></label>
+            <div class="form-actions"><button type="submit" class="btn primary">保存</button></div>
+          </form>
+          <p class="muted">ECS 开启会按网段碎片化缓存 key 并把粗粒度位置信息发给上游,请确认后再开启。fixed 模式必须提供合法 CIDR。</p>
+        </div>
+      </section>
+
+      <!-- Custom Path -->
+      <section id="tab-path" class="panel hidden">
+        <div class="card">
+          <h2>当前自定义路径</h2>
+          <div class="row">
+            <code id="path-box" class="url-box"></code>
+            <button class="btn small" data-copy="#path-box">复制</button>
+          </div>
+          <p class="muted">自定义路径用于隐藏标准 DoH endpoint、躲避扫描器,属于 endpoint hiding,<strong>不是强认证</strong>。修改后旧路径将在配置缓存过期后(约 30-90 秒)失效。</p>
+        </div>
+        <div class="card">
+          <h2>修改路径</h2>
+          <form id="path-form" class="form-grid">
+            <label>新路径(填 8-64 位 [A-Za-z0-9_-],或完整 /xxx/dns-query)
+              <input name="path" placeholder="my-secret-path-2026" />
+            </label>
+            <div class="form-actions"><button type="submit" class="btn primary">保存新路径</button></div>
+          </form>
+          <p id="path-msg" class="error hidden"></p>
+        </div>
+        <div class="card">
+          <h2>一键重新生成</h2>
+          <button id="regen-btn" class="btn danger">生成新的随机路径(旧路径立即弃用)</button>
+          <p id="regen-result" class="hidden"><code class="url-box" id="regen-url"></code></p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="./app.js"></script>
+</body>
+</html>

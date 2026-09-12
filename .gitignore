@@ -1,0 +1,14 @@
+node_modules/
+.wrangler/
+.dev.vars
+dist/
+*.log
+.tmp/
+tools/
+.zcode/
+.tmpmonitor-test-pool.txt
+wrangler.jsonc.local
+*.db
+*.db-shm
+*.db-wal
+__pycache__/

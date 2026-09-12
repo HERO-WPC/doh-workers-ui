@@ -1,0 +1,54 @@
+// Wrangler configuration for the DoH proxy Worker.
+//
+// Deploy steps:
+//   1. npx wrangler kv namespace create CONFIG_KV   -> copy the returned id below
+//   2. npx wrangler secret put ADMIN_SECRET         -> WebUI / Admin API password
+//   3. npx wrangler deploy
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "doh-workers-ui",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-01-01",
+  // dns-packet relies on Node's Buffer API.
+  "compatibility_flags": ["nodejs_compat"],
+
+  // WebUI static assets (Workers Static Assets).
+  // With not_found_handling "none" unknown paths produce real 404s — the
+  // router in src/index.ts explicitly serves the SPA entry (/index.html)
+  // for /admin and delegates everything else to the asset layer.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "none"
+  },
+
+  // KV stores ONLY config + provider metrics. DNS responses live in the
+  // Cache API, never in KV.
+  "kv_namespaces": [
+    {
+      "binding": "CONFIG_KV",
+      // Run `npx wrangler kv namespace create CONFIG_KV` and paste the id.
+      "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+    }
+  ],
+
+  "vars": {
+    // How long (seconds) the parsed config is cached in isolate memory.
+    // Path changes take effect within this window + KV propagation (~60s).
+    "CONFIG_CACHE_TTL": "30"
+  },
+
+  // Admin API password. Set with: npx wrangler secret put ADMIN_SECRET
+  // Never put the secret value here or in Git.
+
+  "observability": {
+    "enabled": true
+  },
+
+  // query-ui-fast: 对外分发的加速地址。DNS 侧用灰云(DNS only)A 记录
+  // 直指优选 IP,请求经优选服务器按 SNI 转发回 CF 边缘时,由本路由
+  // 触发 Worker 执行。query-ui 的 Custom Domain 是保底入口,两者并存。
+  "routes": [
+    { "pattern": "doh.example.com/*", "zone_name": "example.com" }
+  ]
+}

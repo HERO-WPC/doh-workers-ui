@@ -1,0 +1,3 @@
+# Copy to .dev.vars for `npm run dev`.
+# NEVER commit the real secret (it is gitignored).
+ADMIN_SECRET=change-me-local-dev-secret
