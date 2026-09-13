@@ -112,16 +112,20 @@
       statCard("L1 缓存条目", health.cache.entries, bytesHuman(health.cache.bytes)) +
       statCard("运行时间", fmtDuration(health.isolate.uptimeSeconds), "本 isolate");
 
-    const s = stats.global || {};
+    // 运行统计:isolate 本地实时计数。跨 isolate 的"全局累计"已移除——
+    // 它的写入量与 isolate 个数成正比,曾把 KV 免费写额度(1000/天)打满,
+    // 导致配置与指标写入全部失败。官方口径见上方"用量与额度"面板。
+    const s = stats.isolate || {};
     el("stats-cards").innerHTML =
-      statCard("总请求", s.requests ?? 0) +
+      statCard("本 isolate 请求", s.requests ?? 0) +
       statCard("缓存命中", s.cacheHits ?? 0) +
       statCard("Stale 服务", s.cacheStale ?? 0) +
       statCard("缓存未命中", s.cacheMisses ?? 0) +
       statCard("上游成功", s.upstreamOk ?? 0, s.upstreamAvgRttMs != null ? "平均 " + s.upstreamAvgRttMs + " ms" : "") +
       statCard("上游失败", (s.upstreamFail ?? 0) + (s.upstreamTimeouts ? ` (超时 ${s.upstreamTimeouts})` : ""));
     el("isolate-note").textContent =
-      `本 isolate:已处理 ${stats.isolate.requests} 次请求,存活 ${fmtDuration(stats.isolate.uptimeSeconds)}(计数器随 isolate 回收重置,全局累计见上)`;
+      `以上为当前 isolate 的实时计数(存活 ${fmtDuration(stats.isolate.uptimeSeconds)},随 isolate 回收重置)。`+
+      `全站累计请见「用量与额度」里的官方数字。`;
 
     renderUsage(usage);
 
@@ -156,20 +160,16 @@
   }
 
   function renderUsage(u) {
-    if (!u || !u.workers) {
+    if (!u) {
       el("usage-cards").innerHTML = "";
       el("usage-bars").innerHTML = "";
       el("usage-note").textContent = "用量数据暂不可用。";
       return;
     }
-    const w = u.workers, k = u.kv, acc = u.accurate;
-    const storage = k.storageBytes != null ? bytesHuman(k.storageBytes) : "≈" + bytesHuman(k.writeBytesTotal);
-    el("usage-cards").innerHTML =
-      statCard("Workers 请求 · 今日", (w.requestsToday ?? 0).toLocaleString(), "免费额度 " + w.freeTierPerDay.toLocaleString() + "/日") +
-      statCard("Workers 请求 · 累计", (w.requestsTotal ?? 0).toLocaleString(), "自统计开启以来") +
-      statCard("KV 读 · 今日", (k.readsToday ?? 0).toLocaleString(), "累计 " + (k.readsTotal ?? 0).toLocaleString()) +
-      statCard("KV 写 · 今日", (k.writesToday ?? 0).toLocaleString(), "累计 " + (k.writesTotal ?? 0).toLocaleString()) +
-      statCard("KV 键数量", k.keyCount ?? "?", "存储实测 " + storage);
+    const kv = u.kv || {};
+    const free = u.freeTier || { workersPerDay: 100000, kvWritesPerDay: 1000, kvReadsPerDay: 100000 };
+    const acc = u.accurate;
+    const storage = kv.storageBytes != null ? bytesHuman(kv.storageBytes) : "—";
     if (acc && acc.ok) {
       const aw = acc.workers, ak = acc.kv;
       el("usage-cards").innerHTML =
@@ -177,38 +177,23 @@
         statCard("Workers 请求 · 近7天(官方)", (aw.accountWeek ?? 0).toLocaleString(), "本 Worker " + (aw.scriptWeek ?? 0).toLocaleString()) +
         statCard("KV 读 · 今日(官方)", (ak.today.read ?? 0).toLocaleString(), "近7天 " + (ak.week.read ?? 0).toLocaleString()) +
         statCard("KV 写 · 今日(官方)", (ak.today.write ?? 0).toLocaleString(), "近7天 " + (ak.week.write ?? 0).toLocaleString()) +
-        statCard("KV 键/存储", k.keyCount ?? "?", "存储实测 " + storage + " · 删 " + (ak.today.delete ?? 0) + " 列 " + (ak.today.list ?? 0));
+        statCard("KV 键/存储", kv.keyCount ?? "?", "存储实测 " + storage + " · 删 " + (ak.today.delete ?? 0) + " 列 " + (ak.today.list ?? 0));
       el("usage-bars").innerHTML =
-        quotaBar("Workers 请求(官方·今日)", aw.accountToday ?? 0, w.freeTierPerDay, "次") +
-        quotaBar("KV 写(官方·今日)", ak.today.write ?? 0, k.freeWritesPerDay, "次") +
-        quotaBar("KV 读(官方·今日)", ak.today.read ?? 0, k.freeReadsPerDay, "次");
+        quotaBar("Workers 请求(官方·今日)", aw.accountToday ?? 0, free.workersPerDay, "次") +
+        quotaBar("KV 写(官方·今日)", ak.today.write ?? 0, free.kvWritesPerDay, "次") +
+        quotaBar("KV 读(官方·今日)", ak.today.read ?? 0, free.kvReadsPerDay, "次");
       el("usage-note").textContent =
-        `以官方口径为准(GraphQL Analytics,${acc.fetchedAt.slice(11, 19)} UTC 抓取,与 Dashboard 计费一致)。`+
-        `自报值仅供参考且系统性偏低(计数在 isolate 内存中累积,每 10 分钟才落盘,isolate 回收会丢失部分计数):`+
-        `当前自报 Workers 今日 ${(w.requestsToday ?? 0).toLocaleString()}、KV 读 ${(k.readsToday ?? 0).toLocaleString()}、写 ${(k.writesToday ?? 0).toLocaleString()}。`+
-        `官方仅保留今日/近7天,更早累计只能看自报值。`;
-    } else if (acc && !acc.ok) {
-      el("usage-bars").innerHTML =
-        quotaBar("Workers 请求(今日)", w.requestsToday ?? 0, w.freeTierPerDay, "次") +
-        quotaBar("KV 写(今日)", k.writesToday ?? 0, k.freeWritesPerDay, "次") +
-        quotaBar("KV 读(今日)", k.readsToday ?? 0, k.freeReadsPerDay, "次");
-      el("usage-note").textContent = `自报近似值(官方查询失败:${acc.error})。计数内存累积、每 10 分钟写入 KV,尾部请求可能未计入。`;
+        `官方口径:Cloudflare GraphQL Analytics(${acc.fetchedAt.slice(11, 19)} UTC 抓取),与 Dashboard 计费一致。` +
+        `仅提供今日/近7天;KV 写额度是关键约束(免费版 1000/天),写入量与 isolate 数量成正比,` +
+        `故已取消自报统计、并把上游指标合并为单 key 写入。`;
     } else {
-      el("usage-bars").innerHTML =
-        quotaBar("Workers 请求(今日)", w.requestsToday ?? 0, w.freeTierPerDay, "次") +
-        quotaBar("KV 写(今日)", k.writesToday ?? 0, k.freeWritesPerDay, "次") +
-        quotaBar("KV 读(今日)", k.readsToday ?? 0, k.freeReadsPerDay, "次");
+      el("usage-cards").innerHTML =
+        statCard("KV 键数量", kv.keyCount ?? "?", "存储实测 " + storage);
+      el("usage-bars").innerHTML = "";
       el("usage-note").textContent =
-        `统计日 ${u.day}(UTC)· 自报近似值:内存累积、每 10 分钟批量写入 KV,尾部请求可能未计入`;
+        `官方用量查询不可用${acc && acc.error ? ": " + acc.error : ""}。` +
+        `(需要 CF_ACCOUNT_TOKEN + CF_ACCOUNT_ID 两个 secret;查看 KV 键与存储不受影响)`;
     }
-  }
-  function fmtDuration(sec) {
-    if (sec < 60) return sec + "s";
-    if (sec < 3600) return Math.round(sec / 60) + "m";
-    return Math.round(sec / 3600) + "h";
-  }
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
   // ------------------------------------------------------------------

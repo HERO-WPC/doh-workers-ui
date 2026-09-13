@@ -28,7 +28,7 @@ import {
 import { deriveEcsFromIp, parseFixedSubnet, withPrefix, type EcsSpec } from "./ecs";
 import { DNS_CONTENT_TYPE, DOH_CORS_HEADERS, bareContentType, jsonResponse, textResponse } from "./httputil";
 import { buildQueryFromName, normalizeQType, validateQueryName, wantsJson, wireToJson } from "./jsonapi";
-import { ensureStatsClock, flushStats, getMetricsStore, isolateStats } from "./metrics";
+import { ensureStatsClock, getMetricsStore, isolateStats } from "./metrics";
 import { AllUpstreamsFailedError, resolveQuery } from "./routing";
 import { probeUpstream } from "./upstream";
 import type { Config, Env, WorkerCtx } from "./types";
@@ -44,11 +44,10 @@ function getMetrics(env: Env) {
   return getMetricsStore(env.CONFIG_KV);
 }
 
-/** Provider metrics + 全局统计一次性节流刷写(均走 waitUntil,不阻塞响应)。 */
+/** 上游指标节流刷写(waitUntil,不阻塞响应)。自报全局统计已移除。 */
 function flushTelemetry(env: Env, ctx: WorkerCtx): void {
   const waitUntil = (p: Promise<unknown>) => ctx.waitUntil(p);
   getMetrics(env).flush(waitUntil);
-  flushStats(env.CONFIG_KV, waitUntil);
 }
 
 interface InflightOutcome {

@@ -13,7 +13,6 @@ import { handleAdminApi } from "./admin";
 import { handleDohRequest } from "./doh";
 import { getConfig } from "./config";
 import { jsonResponse, methodNotAllowed, textResponse, WORKER_VERSION } from "./httputil";
-import { countKv } from "./metrics";
 import type { Env } from "./types";
 
 export default {
@@ -21,14 +20,6 @@ export default {
     try {
       const url = new URL(request.url);
       const path = url.pathname;
-
-      // Count KV operations for the usage dashboard. env persists across
-      // requests in an isolate — wrap exactly once or counts would stack.
-      const envAny = env as Env & { __kvCounted?: boolean };
-      if (!envAny.__kvCounted) {
-        envAny.CONFIG_KV = countKv(envAny.CONFIG_KV);
-        envAny.__kvCounted = true;
-      }
 
       if (path === "/health") {
         if (request.method !== "GET" && request.method !== "HEAD") {

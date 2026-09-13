@@ -18,7 +18,7 @@ import {
 } from "./config";
 import { testUpstreamUrl } from "./doh";
 import { bareContentType, jsonResponse, methodNotAllowed, textResponse, WORKER_VERSION } from "./httputil";
-import { ensureStatsClock, getGlobalStats, getMetricsStore, getUsageSnapshot, isolateStats, reliabilityOf, scoreOf, statsSnapshot, uptimeSeconds } from "./metrics";
+import { ensureStatsClock, getMetricsStore, isolateStats, reliabilityOf, scoreOf, statsSnapshot, uptimeSeconds } from "./metrics";
 import { generatePathToken, buildPath } from "./pathgen";
 import { fetchAccountUsage } from "./usage";
 import type { Config, Env, WorkerCtx } from "./types";
@@ -147,7 +147,6 @@ export async function handleAdminApi(request: Request, env: Env, ctx: WorkerCtx)
   // ---- usage(KV 用量 + Workers 请求量,含免费额度对照) ----
   if (route === "/usage") {
     if (method !== "GET") return methodNotAllowed("GET");
-    const usage = await getUsageSnapshot(env.CONFIG_KV);
     // 键清单只在 admin 路径上取:一次 LIST,列出 KV 里实际存了什么。
     const keys: string[] = [];
     try {
@@ -187,26 +186,12 @@ export async function handleAdminApi(request: Request, env: Env, ctx: WorkerCtx)
       }
     }
     return jsonResponse({
-      note: "self-reported counters, async-aggregated into KV (approximate); official numbers via GraphQL when CF_ACCOUNT_TOKEN is set",
-      day: usage.day,
-      workers: {
-        requestsTotal: usage.totals.requests,
-        requestsToday: usage.today.requests ?? 0,
-        freeTierPerDay: 100000,
-      },
+      note: "official numbers via Cloudflare GraphQL Analytics; KV inventory measured live",
+      freeTier: { workersPerDay: 100000, kvWritesPerDay: 1000, kvReadsPerDay: 100000 },
       kv: {
-        readsTotal: usage.totals.kvReads,
-        writesTotal: usage.totals.kvWrites,
-        listsTotal: usage.totals.kvLists,
-        readsToday: usage.today.kvReads ?? 0,
-        writesToday: usage.today.kvWrites ?? 0,
-        readBytesTotal: usage.totals.kvReadBytes,
-        writeBytesTotal: usage.totals.kvWriteBytes,
         keyCount: keys.length,
         storageBytes,
         keys: keys.sort(),
-        freeWritesPerDay: 1000,
-        freeReadsPerDay: 100000,
       },
       accurate,
     });
@@ -236,10 +221,8 @@ export async function handleAdminApi(request: Request, env: Env, ctx: WorkerCtx)
         };
       }),
     );
-    const global = await getGlobalStats(env.CONFIG_KV);
     return jsonResponse({
-      note: "global totals are async-aggregated into KV (eventually consistent, approximate)",
-      global,
+      note: "isolate-local live counters; all-time/official totals live in /usage",
       isolate: statsSnapshot(),
       l1Cache: dnsCache.stats(),
       upstreams,

@@ -175,8 +175,9 @@ describe("regenerate-path", () => {
 describe("stats & health", () => {
   it("GET /stats includes isolate counters and provider metrics", async () => {
     const { json } = await call("/stats");
-    expect(json.note).toContain("aggregated");
-    expect(json.global.requests).toBeGreaterThanOrEqual(0);
+    // 自报全局统计已移除(写入量与 isolate 数成正比,会打满 KV 写额度);
+    // 现在只暴露 isolate 本地实时计数,全局/官方口径在 /usage。
+    expect(json.global).toBeUndefined();
     expect(json.isolate.requests).toBeGreaterThanOrEqual(0);
     expect(json.upstreams.length).toBeGreaterThan(0);
     expect(json.upstreams[0]).toHaveProperty("score");
