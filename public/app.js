@@ -127,17 +127,36 @@
       `以上为当前 isolate 的实时计数(存活 ${fmtDuration(stats.isolate.uptimeSeconds)},随 isolate 回收重置)。`+
       `全站累计请见「用量与额度」里的官方数字。`;
 
-    renderUsage(usage);
+    // 各面板独立容错:单个面板的数据/渲染异常不再连累其它面板
+    const safe = (name, fn) => { try { fn(); } catch (e) { console.error(`[面板 ${name}] 渲染失败`, e); } };
 
-    el("upstream-health").innerHTML = stats.upstreams
-      .map(
-        (u) => `<div class="row">
-          <span style="min-width:120px">${escapeHtml(u.name)}</span>
-          ${badgeFor(u.enabled ? (u.ok >= u.fail + u.timeoutCount ? true : u.ok + u.fail + u.timeoutCount > 0 ? false : null) : null)}
-          <span class="muted">RTT ${u.rttEmaMs != null ? u.rttEmaMs + " ms" : "?"} · score ${u.score} · 优先级 ${u.priority}</span>
-        </div>`,
-      )
-      .join("");
+    safe("stats-cards", () => {
+      const s = stats.isolate || {};
+      el("stats-cards").innerHTML =
+        statCard("本 isolate 请求", s.requests ?? 0) +
+        statCard("缓存命中", s.cacheHits ?? 0) +
+        statCard("Stale 服务", s.cacheStale ?? 0) +
+        statCard("缓存未命中", s.cacheMisses ?? 0) +
+        statCard("上游成功", s.upstreamOk ?? 0, s.upstreamAvgRttMs != null ? "平均 " + s.upstreamAvgRttMs + " ms" : "") +
+        statCard("上游失败", (s.upstreamFail ?? 0) + (s.upstreamTimeouts ? ` (超时 ${s.upstreamTimeouts})` : ""));
+      el("isolate-note").textContent =
+        `以上为当前 isolate 的实时计数(存活 ${fmtDuration(stats.isolate.uptimeSeconds)},随 isolate 回收重置)。`+
+        `全站累计请见「用量与额度」里的官方数字。`;
+    });
+
+    safe("usage", () => renderUsage(usage));
+
+    safe("upstream-health", () => {
+      el("upstream-health").innerHTML = stats.upstreams
+        .map(
+          (u) => `<div class="row">
+            <span style="min-width:120px">${escapeHtml(u.name)}</span>
+            ${badgeFor(u.enabled ? (u.ok >= u.fail + u.timeoutCount ? true : u.ok + u.fail + u.timeoutCount > 0 ? false : null) : null)}
+            <span class="muted">RTT ${u.rttEmaMs != null ? u.rttEmaMs + " ms" : "?"} · score ${u.score} · 优先级 ${u.priority}</span>
+          </div>`,
+        )
+        .join("");
+    });
 
     renderCacheForm(currentConfig);
     renderEcsForm(currentConfig);
