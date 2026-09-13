@@ -131,16 +131,43 @@ export class MetricsStore {
   }
 
   /** Fire-and-forget persistence; call with ctx.waitUntil on each request.
-   *  整块写入:一次 flush 只产生 1 次 KV 写。 */
+   *  整块写入:一次 flush 只产生 1 次 KV 写。
+   *
+   *  写入前必须与 KV 里的现有 blob 合并:本 isolate 只知道自己「见过」的上游
+   *  (record 不触发加载,只有 adaptive 路径才 get),整块覆盖会把其它上游、
+   *  其它 isolate 写的指标静默抹掉。合并规则取计数更多的一方 —— 各 isolate
+   *  的内存计数都源自对同一 blob 的加载,取其大者既不丢历史也不会回退。 */
   flush(waitUntil: (p: Promise<unknown>) => void): void {
     if (!this.kv || !this.dirty) return;
     const now = Date.now();
     if (now - this.lastFlush < FLUSH_INTERVAL_MS) return;
     this.lastFlush = now;
     this.dirty = false;
-    const blob = JSON.stringify(Object.fromEntries(this.mem));
+    const kv = this.kv;
+    const mine = new Map(this.mem);
     waitUntil(
-      this.kv.put(MetricsStore.BLOB_KEY, blob).catch(() => {
+      (async () => {
+        const merged: Record<string, ProviderMetrics> = {};
+        try {
+          const raw = await kv.get(MetricsStore.BLOB_KEY);
+          if (raw) {
+            const obj = JSON.parse(raw) as Record<string, ProviderMetrics>;
+            for (const [id, v] of Object.entries(obj)) {
+              if (v && typeof v === "object" && typeof v.ok === "number") {
+                merged[id] = { ...emptyMetrics(), ...v };
+              }
+            }
+          }
+        } catch {
+          // 读失败:退化为只写本 isolate 数据(仍优于完全不写)
+        }
+        const weight = (m: ProviderMetrics) => m.ok + m.fail + m.timeout;
+        for (const [id, m] of mine) {
+          const existing = merged[id];
+          if (!existing || weight(m) >= weight(existing)) merged[id] = m;
+        }
+        await kv.put(MetricsStore.BLOB_KEY, JSON.stringify(merged));
+      })().catch(() => {
         this.dirty = true; // 下次请求重试
       }),
     );

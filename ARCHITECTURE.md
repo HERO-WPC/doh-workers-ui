@@ -22,7 +22,16 @@
 | 确定性 TTL jitter | jitter 因子由 cache key 哈希推导(取哈希末 4 位 hex → ±jitterPercent%),同一 key 在所有 isolate 上得到相同 jitter,天然抗 cache stampede |
 | TXID 处理正确 | 生成 cache key 前把报文前 2 字节(TXID)归零;所有响应路径统一经 `patchTransactionId` 用请求者 TXID 覆写缓存数据 |
 | ECS 隐私截断 | IPv4 截到 /24、IPv6 截到 /56 才注入;客户端已带 ECS 则透传不改;对无 ECS 客户端从响应中剥离 ECS |
-| 写侧纪律 | Cache API 写入前:确定性采样、热 key 强制写、写冷却期、isolate 级写入限速、in-flight 锁;写操作全部 `waitUntil` 异步化,不阻塞响应 |
+| 写侧纪律 | Cache API 写入一律走 `waitUntil` 异步化,不阻塞响应;写只发生在可缓存响应(NOERROR/NXDOMAIN)上,并由 single-flight 保证同一 key 并发只触发一次上游与一次写。**当前未实现**确定性采样 / 写冷却 / isolate 级写入限速(随机 qname 流量会线性放大 L2 写入,属已知待改进项) |
+
+### 指标(KV)落盘纪律
+
+上游指标只用于自适应排序,不参与正确性:
+
+- 全量指标存在单个 KV key(`metrics`)里,**一次 flush 只花 1 次写**;
+- 节流窗口 30 分钟,且 `lastFlush` 初始化为启动时刻 —— 冷启动 isolate 不会立刻写(早期 0 初值会让节流失效,写入量随冷 isolate 数增长,曾打满免费额度 1000 写/天);
+- flush 前先读回 KV 现有 blob 并按计数合并,避免本 isolate「只见过部分上游」时把其它上游历史整块覆盖;
+- 写入走 `waitUntil`,失败仅重新标脏,不影响请求。
 
 **值得改进(我们做得更好):**
 - 32 位 FNV-1a cache key(仅 ~1600 万空间)且命中时不做全文比对,**碰撞会返回错误域名的记录**。我们改用 SHA-256(128+ bit 有效空间)。
@@ -93,7 +102,7 @@
 完整递归解析器 + 过滤引擎(数万行),直接读源码确认其缓存设计(`src/plugins/dns-op/cache.js`、`cache-api.js`、`cache-util.js`、`resolver.js`):
 
 **值得采用:**
-- **双层缓存 write-through**:`DnsCache` 先查 LFU 内存缓存,miss 查 Cache API,命中后回填内存层(`cache.js:37-64`);写入时两层同写,且 Cache API 写通过 dispatcher 交给 `waitUntil`(`cache.js:87-108`)。
+- **双层缓存 write-through**:`DnsCache` 先查 LFU 内存缓存,miss 查 Cache API,命中后回填内存层(`cache.js:37-64`);写入时两层同写,且 Cache API 写交给 `waitUntil`(`cache.js:87-108`)。(以上为对参照项目的描述;我们的实现同样两层同写 + `waitUntil`,但没有 dispatcher 组件。)
 - **缓存元数据放在自定义响应头里**(`x-rdnscache-metadata`:JSON {expiry, ...}),缓存体就是原始 DNS 报文(`cache-util.js:144-162`)。我们采用同样的 header-carrying-metadata 方案。
 - **Cache key 归一化**:`normalizeName(qname) + ":" + qtype + (":dnssec" if DO)`,TXID 不参与 key(`cache-util.js:120-127`)。
 - **命中时 TXID + TTL 重写**:`updatedAnswer()` = `updateQueryId()`(改回客户端 TXID)+ `updateTtl()`(按剩余时间重算 TTL,过期则给随机 min..max 值打散)(`cache-util.js:109-118, 256-261`)。

@@ -256,7 +256,11 @@ export function validateUpstreamResponse(
   if (String(rq.type) !== q.qtype) return null;
   if (String(rq.class ?? "IN") !== q.qclass) return null;
 
-  const rcode = rcodeOf(flags);
+  // 有效 rcode = EDNS 扩展高 8 位 + 头部低 4 位。只看低 4 位会把
+  // BADVERS(16) 之类的扩展错误当成 NOERROR(0) 而错误地缓存。
+  const opt = findOpt(dec);
+  const extended = opt && typeof opt.extendedRcode === "number" ? opt.extendedRcode : 0;
+  const rcode = ((extended & 0xff) << 4) | rcodeOf(flags);
   return {
     packet: dec,
     rcode,

@@ -60,7 +60,9 @@ class LruTier {
     const bytes = body.length;
     this.map.set(key, { body, meta, bytes });
     this.totalBytes += bytes;
-    while (this.map.size > this.maxEntries || (this.totalBytes > this.maxBytes && this.map.size > 1)) {
+    // 允许驱逐"最后一条":否则单个超过 maxBytes 的条目会永久驻留,
+    // 使 L1 的内存统计长期高于上限。
+    while (this.map.size > this.maxEntries || (this.totalBytes > this.maxBytes && this.map.size > 0)) {
       const oldest = this.map.keys().next();
       if (oldest.done) break;
       const evicted = this.map.get(oldest.value);

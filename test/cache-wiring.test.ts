@@ -19,7 +19,7 @@ describe("DoH 缓存写入参数", () => {
     const cfg = await m.config.getConfig(env as never);
     const putSpy = vi.spyOn(m.cache.dnsCache, "put");
 
-    const wire = buildClientQuery({ name: "cache-wiring.example", type: "A", ttl: 300 });
+    const wire = buildClientQuery({ name: "cache-wiring.example", type: "A" });
     const ctx = new FakeCtx();
     const res = await (m.index.default as unknown as { fetch(r: Request, e: unknown, c: FakeCtx): Promise<Response> }).fetch(
       new Request(`https://worker.test${cfg.doh.path}?dns=${toBase64Url(wire)}`),

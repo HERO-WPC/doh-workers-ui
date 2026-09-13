@@ -143,7 +143,15 @@ function ipv6FromBytes(b: Uint8Array): string {
     }
   }
   if (bestLen < 2) return groups.join(":");
-  return [...groups.slice(0, bestStart), "", ...groups.slice(bestStart + bestLen)].join(":");
+  // RFC 5952:零段压缩时必须保留 "::"。原实现用空串 join 出 ":",
+  // 在零段位于开头或结尾时会产出 "2001:db8:"、":1"、"" 这类非法字面量
+  // (下游编码器宽容才没崩,但缓存键/日志里是非规范表示)。
+  const left = groups.slice(0, bestStart);
+  const right = groups.slice(bestStart + bestLen);
+  if (left.length === 0 && right.length === 0) return "::";
+  if (left.length === 0) return "::" + right.join(":");
+  if (right.length === 0) return left.join(":") + "::";
+  return left.join(":") + "::" + right.join(":");
 }
 
 function makeSpec(family: 1 | 2, address: string, prefix: number): EcsSpec | null {

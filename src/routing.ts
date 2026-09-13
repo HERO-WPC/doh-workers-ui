@@ -91,6 +91,11 @@ async function runRace(
         fetchImpl: deps.fetchImpl,
       });
       if (r.ok) {
+        if (state.winner) {
+          // 竞速败者:两个响应几乎同时到达时,abort() 拦不住已进入微任务
+          // 队列的兄弟请求。此处不记账,否则失败者也被算成功,污染评分。
+          throw new Error(`upstream ${upstream.id} superseded`);
+        }
         state.winner = true;
         for (let j = 0; j < controllers.length; j++) {
           if (j !== i) controllers[j].abort();
@@ -188,7 +193,9 @@ export async function resolveQuery(
     if (win.ok && win.result.answer) {
       return { buf: win.result.buf!, upstreamId: win.id, rttMs: win.rttMs!, answer: win.result.answer, attempts: records };
     }
-    throw new AllUpstreamsFailedError("all upstreams failed", Boolean(win.timedOut), records);
+    // 超时归类统一看全部尝试记录,而不是只看最后一次串行尝试:
+    // 否则"竞速超时 + 剩余上游返回错误"会被报成 502(应为 504)。
+    throw new AllUpstreamsFailedError("all upstreams failed", records.some((r) => r.timedOut), records);
   }
 
   const lastTimedOut = records.some((r) => r.timedOut);
