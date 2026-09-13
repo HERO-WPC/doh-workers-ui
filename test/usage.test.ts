@@ -55,3 +55,14 @@ describe("account usage (GraphQL)", () => {
     expect(() => parseUsageResponse({ data: { viewer: { accounts: [] } } }, "x")).toThrow("no account data");
   });
 });
+
+describe("usage query window", () => {
+  it("anchors 'today' at UTC midnight, not the current hour", () => {
+    const q = buildUsageQuery("acct");
+    // 今日窗口必须以 T00:00:00Z 结尾(此前 bug 是当前小时起点)
+    const m = q.match(/datetime_geq: "([^"]+)"/);
+    expect(m).toBeTruthy();
+    expect(m![1].endsWith("T00:00:00Z")).toBe(true);
+    expect(m![1]).toBe(new Date().toISOString().slice(0, 10) + "T00:00:00Z");
+  });
+});

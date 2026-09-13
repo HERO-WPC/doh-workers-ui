@@ -24,7 +24,9 @@ export interface AccountUsage {
 export class AccountUsageError extends Error {}
 
 function utcDayStart(): string {
-  return new Date().toISOString().slice(0, 13) + ":00:00Z";
+  // 当日 UTC 零点。此前误用 slice(0,13)(= 当前小时的起点),
+  // 导致"今日"只统计最近几分钟,数字严重偏小。
+  return new Date().toISOString().slice(0, 10) + "T00:00:00Z";
 }
 
 export function buildUsageQuery(accountTag: string): string {

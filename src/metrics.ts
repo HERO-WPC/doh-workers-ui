@@ -37,32 +37,39 @@ export function scoreOf(m: ProviderMetrics): number {
 
 export class MetricsStore {
   private mem = new Map<string, ProviderMetrics>();
-  private dirty = new Set<string>();
+  private dirty = false;
   private lastFlush = 0;
+  private loaded = false;
 
   constructor(private kv: { get(key: string): Promise<string | null>; put(key: string, value: string): Promise<void> } | null) {}
 
-  private key(id: string): string {
-    return `metrics:${id}`;
+  /** 所有上游指标存在同一个 KV key 里(见 flush):一次 flush 只花 1 次写额度。
+   *  之前每个上游一个 key,一次 flush 写 4 个,把免费额度(1000 写/天)打到 90%。 */
+  private static readonly BLOB_KEY = "metrics";
+
+  private async loadAll(): Promise<void> {
+    if (this.loaded || !this.kv) return;
+    this.loaded = true;
+    try {
+      const raw = await this.kv.get(MetricsStore.BLOB_KEY);
+      if (raw) {
+        const obj = JSON.parse(raw) as Record<string, ProviderMetrics>;
+        for (const [id, v] of Object.entries(obj)) {
+          if (v && typeof v === "object" && typeof (v as ProviderMetrics).ok === "number") {
+            this.mem.set(id, { ...emptyMetrics(), ...v });
+          }
+        }
+      }
+    } catch {
+      // Treat KV errors as "no history".
+    }
   }
 
   async get(id: string): Promise<ProviderMetrics> {
     const cached = this.mem.get(id);
     if (cached) return cached;
-    let m = emptyMetrics();
-    if (this.kv) {
-      try {
-        const raw = await this.kv.get(this.key(id));
-        if (raw) {
-          const parsed = JSON.parse(raw) as ProviderMetrics;
-          if (parsed && typeof parsed === "object" && typeof parsed.ok === "number") {
-            m = { ...emptyMetrics(), ...parsed };
-          }
-        }
-      } catch {
-        // Treat KV errors as "no history".
-      }
-    }
+    await this.loadAll();
+    const m = this.mem.get(id) ?? emptyMetrics();
     this.mem.set(id, m);
     return m;
   }
@@ -87,29 +94,23 @@ export class MetricsStore {
     }
     m.updatedAt = new Date().toISOString();
     this.mem.set(id, m);
-    this.dirty.add(id);
+    this.dirty = true;
   }
 
-  /** Fire-and-forget persistence; call with ctx.waitUntil on each request. */
+  /** Fire-and-forget persistence; call with ctx.waitUntil on each request.
+   *  整块写入:一次 flush 只产生 1 次 KV 写。 */
   flush(waitUntil: (p: Promise<unknown>) => void): void {
-    if (!this.kv || this.dirty.size === 0) return;
+    if (!this.kv || !this.dirty) return;
     const now = Date.now();
     if (now - this.lastFlush < FLUSH_INTERVAL_MS) return;
     this.lastFlush = now;
-    const ids = [...this.dirty];
-    this.dirty.clear();
-    for (const id of ids) {
-      const m = this.mem.get(id);
-      if (!m) continue;
-      waitUntil(
-        this.kv
-          .put(this.key(id), JSON.stringify(m))
-          .catch(() => {
-            // Re-mark so a later flush can retry.
-            this.dirty.add(id);
-          }),
-      );
-    }
+    this.dirty = false;
+    const blob = JSON.stringify(Object.fromEntries(this.mem));
+    waitUntil(
+      this.kv.put(MetricsStore.BLOB_KEY, blob).catch(() => {
+        this.dirty = true; // 下次请求重试
+      }),
+    );
   }
 
   snapshot(id: string): ProviderMetrics | undefined {

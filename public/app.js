@@ -183,7 +183,10 @@
         quotaBar("KV 写(官方·今日)", ak.today.write ?? 0, k.freeWritesPerDay, "次") +
         quotaBar("KV 读(官方·今日)", ak.today.read ?? 0, k.freeReadsPerDay, "次");
       el("usage-note").textContent =
-        `官方口径:GraphQL Analytics(账号 ${acc.fetchedAt.slice(11, 19)} UTC 抓取),与 Dashboard 计费一致;下方灰字为自报近似对照。官方仅提供今日/近7天,更早累计看自报值。`;
+        `以官方口径为准(GraphQL Analytics,${acc.fetchedAt.slice(11, 19)} UTC 抓取,与 Dashboard 计费一致)。`+
+        `自报值仅供参考且系统性偏低(计数在 isolate 内存中累积,每 10 分钟才落盘,isolate 回收会丢失部分计数):`+
+        `当前自报 Workers 今日 ${(w.requestsToday ?? 0).toLocaleString()}、KV 读 ${(k.readsToday ?? 0).toLocaleString()}、写 ${(k.writesToday ?? 0).toLocaleString()}。`+
+        `官方仅保留今日/近7天,更早累计只能看自报值。`;
     } else if (acc && !acc.ok) {
       el("usage-bars").innerHTML =
         quotaBar("Workers 请求(今日)", w.requestsToday ?? 0, w.freeTierPerDay, "次") +
