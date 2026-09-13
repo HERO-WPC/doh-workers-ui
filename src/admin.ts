@@ -173,12 +173,17 @@ export async function handleAdminApi(request: Request, env: Env, ctx: WorkerCtx)
       }
     }
     // 官方口径(GraphQL Analytics):配置了账号 token 才可用。
-    let accurate: Awaited<ReturnType<typeof fetchAccountUsage>> | { ok: false; error: string } | null = null;
+    let accurate:
+      | ({ ok: true } & Awaited<ReturnType<typeof fetchAccountUsage>>)
+      | { ok: false; error: string }
+      | null = null;
     if (env.CF_ACCOUNT_TOKEN && env.CF_ACCOUNT_ID) {
       try {
-        accurate = await fetchAccountUsage(env.CF_ACCOUNT_TOKEN, env.CF_ACCOUNT_ID, "doh-workers-ui");
+        const u = await fetchAccountUsage(env.CF_ACCOUNT_TOKEN, env.CF_ACCOUNT_ID, "doh-workers-ui");
+        accurate = { ok: true, ...u };
       } catch (e) {
-        accurate = { ok: false, error: e instanceof Error ? e.message : String(e) };
+        const msg = e instanceof Error ? e.message : String(e);
+        accurate = { ok: false, error: msg || "unknown error" };
       }
     }
     return jsonResponse({
