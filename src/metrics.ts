@@ -40,7 +40,10 @@ export function scoreOf(m: ProviderMetrics): number {
 export class MetricsStore {
   private mem = new Map<string, ProviderMetrics>();
   private dirty = false;
-  private lastFlush = 0;
+  // 初始化为"现在",否则 Date.now() - 0 恒大于节流窗口,每个新建 isolate
+  // 的第一次上游请求都会立刻写一次 KV —— 30 分钟节流对冷启动完全失效,
+  // 写入量随"冷 isolate 数"增长(曾把免费额度 1000 写/天打满)。
+  private lastFlush = Date.now();
   private loaded = false;
   private blobMissing = false;
   private legacyTried = new Set<string>();

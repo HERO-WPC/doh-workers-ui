@@ -198,7 +198,9 @@ function resolveAndStore(
       const cacheable = storeTtl !== null;
       if (cacheable) {
         const body0 = forCache(answer.packet);
-        ctx.waitUntil(dnsCache.put(keyUrl, body0, storeTtl!, storeTtl! + cfg.cache.staleTTL));
+        // staleFor 表示"在 freshFor 之上"的窗口(cache.ts 契约),不能再叠加 storeTtl,
+        // 否则实际 stale 窗口被放大一倍且 staleTTL=0 时仍会服务过期数据。
+        ctx.waitUntil(dnsCache.put(keyUrl, body0, storeTtl!, cfg.cache.staleTTL));
       }
       return {
         buf: forCache({ ...answer.packet, id: 0 }),
