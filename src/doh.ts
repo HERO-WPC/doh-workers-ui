@@ -26,7 +26,8 @@ import {
   type ParsedClientQuery,
 } from "./dnsmsg";
 import { deriveEcsFromIp, parseFixedSubnet, withPrefix, type EcsSpec } from "./ecs";
-import { DNS_CONTENT_TYPE, DOH_CORS_HEADERS, bareContentType, textResponse } from "./httputil";
+import { DNS_CONTENT_TYPE, DOH_CORS_HEADERS, bareContentType, jsonResponse, textResponse } from "./httputil";
+import { buildQueryFromName, normalizeQType, validateQueryName, wantsJson, wireToJson } from "./jsonapi";
 import { ensureStatsClock, flushStats, getMetricsStore, isolateStats } from "./metrics";
 import { AllUpstreamsFailedError, resolveQuery } from "./routing";
 import { probeUpstream } from "./upstream";
@@ -73,15 +74,35 @@ function decodeBase64UrlParam(value: string): Uint8Array | null {
   return new Uint8Array(Buffer.from(padded, "base64"));
 }
 
-/** Extract the raw DNS message from a GET (dns= param) or POST (body). */
-async function extractDohInput(request: Request, cfg: Config): Promise<{ ok: true; wire: Uint8Array } | { ok: false; response: Response }> {
+/** Extract the raw DNS message from a GET (dns=/name= param) or POST (body). */
+async function extractDohInput(request: Request, cfg: Config): Promise<{ ok: true; wire: Uint8Array; json: boolean } | { ok: false; response: Response }> {
   const maxBody = cfg.cache.maxBody;
 
   if (request.method === "GET") {
     const url = new URL(request.url);
     const dnsParam = url.searchParams.get("dns");
     if (!dnsParam) {
-      return { ok: false, response: textResponse(400, "missing dns query parameter") };
+      // Human-friendly surface: ?name=example.com&type=A (Cloudflare-style).
+      // The base64url ?dns= form stays the primary, RFC 8484-compliant path.
+      const name = url.searchParams.get("name");
+      if (name) {
+        const nameError = validateQueryName(name);
+        if (nameError) {
+          return { ok: false, response: textResponse(400, `invalid name parameter: ${nameError}`) };
+        }
+        const qtype = normalizeQType(url.searchParams.get("type"));
+        if (!qtype) {
+          return { ok: false, response: textResponse(400, "unsupported type parameter") };
+        }
+        const cdRaw = url.searchParams.get("cd");
+        const cd = cdRaw === "1" || cdRaw === "true";
+        return {
+          ok: true,
+          wire: buildQueryFromName({ name, type: qtype, cd }),
+          json: wantsJson(request.headers.get("accept"), url.searchParams.get("ct")),
+        };
+      }
+      return { ok: false, response: textResponse(400, "missing dns query parameter (or use ?name=&type=)") };
     }
     // base64url of maxBody bytes is ~maxBody*4/3 chars.
     if (dnsParam.length > Math.ceil((maxBody / 3) * 4) + 4) {
@@ -94,7 +115,7 @@ async function extractDohInput(request: Request, cfg: Config): Promise<{ ok: tru
     if (wire.length > maxBody) {
       return { ok: false, response: textResponse(413, "DNS message too large") };
     }
-    return { ok: true, wire };
+    return { ok: true, wire, json: false };
   }
 
   // POST
@@ -108,7 +129,7 @@ async function extractDohInput(request: Request, cfg: Config): Promise<{ ok: tru
   if (body.byteLength > maxBody) {
     return { ok: false, response: textResponse(413, "DNS message too large") };
   }
-  return { ok: true, wire: new Uint8Array(body) };
+  return { ok: true, wire: new Uint8Array(body), json: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -243,7 +264,30 @@ function serveCached(cached: Buffer, q: ParsedClientQuery, ageSeconds: number, s
 // Entry point
 // ---------------------------------------------------------------------------
 
+/**
+ * DoH entry point. Wireformat requests (`?dns=` / POST) go straight through;
+ * human-friendly GETs (`?name=&type=`) get a JSON body when the client asks
+ * for it via Accept or `ct=application/dns-json`, wireformat otherwise.
+ */
 export async function handleDohRequest(request: Request, env: Env, cfg: Config, ctx: WorkerCtx): Promise<Response> {
+  const response = await handleDohWireRequest(request, env, cfg, ctx);
+  if (
+    request.method === "GET" &&
+    response.headers.get("content-type") === DNS_CONTENT_TYPE &&
+    (response.status === 200 || response.status === 203)
+  ) {
+    const url = new URL(request.url);
+    if (!url.searchParams.get("dns") && url.searchParams.get("name") &&
+        wantsJson(request.headers.get("accept"), url.searchParams.get("ct"))) {
+      const wire = new Uint8Array(await response.arrayBuffer());
+      const json = wireToJson(wire, response.headers.get("x-doh-cache"));
+      return jsonResponse(json, 200, DOH_CORS_HEADERS);
+    }
+  }
+  return response;
+}
+
+async function handleDohWireRequest(request: Request, env: Env, cfg: Config, ctx: WorkerCtx): Promise<Response> {
   if (request.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: DOH_CORS_HEADERS });
   }

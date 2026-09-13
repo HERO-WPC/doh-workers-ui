@@ -135,6 +135,23 @@ npm run deploy
 
 敏感信息只有 `ADMIN_SECRET`(Worker Secret,不进 Git、不进 KV);KV id 只是非机密资源标识。
 
+## 查询方式:可读的 ?name= 参数
+
+标准 RFC 8484 GET 的 `?dns=` 是 base64url 二进制,不便直接阅读。本 Worker 在密钥路径上额外支持 Cloudflare 风格的可读参数:
+
+```
+# 浏览器直接打开(返回 JSON,application/dns-json)
+https://<你的域名>/<密钥路径>/dns-query?name=chatgpt.com&type=A
+
+# curl(默认返回 wireformat;加 Accept 拿 JSON)
+curl -H "accept: application/dns-json" "https://<你的域名>/<密钥路径>/dns-query?name=chatgpt.com&type=A"
+```
+
+- `name` 必填,`type` 默认 A(支持 A/AAAA/CNAME/MX/TXT/NS/SOA/PTR/SRV/CAA/HTTPS 等);
+- 请求头 `Accept: application/dns-json` 或参数 `ct=application/dns-json` → 返回 JSON(Status/Question/Answer/TTL/data);
+- 不带上述标记时仍返回标准 `application/dns-message` 二进制,协议客户端不受影响;
+- `?dns=` 参数优先级更高,原有客户端零改动。
+
 ## 自定义路径
 
 DoH endpoint 形如:
