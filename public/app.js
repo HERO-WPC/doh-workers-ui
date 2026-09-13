@@ -162,19 +162,42 @@
       el("usage-note").textContent = "用量数据暂不可用。";
       return;
     }
-    const w = u.workers, k = u.kv;
+    const w = u.workers, k = u.kv, acc = u.accurate;
+    const storage = k.storageBytes != null ? bytesHuman(k.storageBytes) : "≈" + bytesHuman(k.writeBytesTotal);
     el("usage-cards").innerHTML =
       statCard("Workers 请求 · 今日", (w.requestsToday ?? 0).toLocaleString(), "免费额度 " + w.freeTierPerDay.toLocaleString() + "/日") +
       statCard("Workers 请求 · 累计", (w.requestsTotal ?? 0).toLocaleString(), "自统计开启以来") +
       statCard("KV 读 · 今日", (k.readsToday ?? 0).toLocaleString(), "累计 " + (k.readsTotal ?? 0).toLocaleString()) +
       statCard("KV 写 · 今日", (k.writesToday ?? 0).toLocaleString(), "累计 " + (k.writesTotal ?? 0).toLocaleString()) +
-      statCard("KV 键数量", k.keyCount ?? "?", "写入流量 " + bytesHuman(k.writeBytesTotal) + " · 读取 " + bytesHuman(k.readBytesTotal));
-    el("usage-bars").innerHTML =
-      quotaBar("Workers 请求(今日)", w.requestsToday ?? 0, w.freeTierPerDay, "次") +
-      quotaBar("KV 写(今日)", k.writesToday ?? 0, k.freeWritesPerDay, "次") +
-      quotaBar("KV 读(今日)", k.readsToday ?? 0, k.freeReadsPerDay, "次");
-    el("usage-note").textContent =
-      `统计日 ${u.day}(UTC)· 计数为本 Worker 自报近似值:内存累积、每 10 分钟批量写入 KV,尾部请求可能未计入`;
+      statCard("KV 键数量", k.keyCount ?? "?", "存储实测 " + storage);
+    if (acc && acc.ok) {
+      const aw = acc.workers, ak = acc.kv;
+      el("usage-cards").innerHTML =
+        statCard("Workers 请求 · 今日(官方)", (aw.accountToday ?? 0).toLocaleString(), "本 Worker " + (aw.scriptToday ?? 0).toLocaleString()) +
+        statCard("Workers 请求 · 近7天(官方)", (aw.accountWeek ?? 0).toLocaleString(), "本 Worker " + (aw.scriptWeek ?? 0).toLocaleString()) +
+        statCard("KV 读 · 今日(官方)", (ak.today.read ?? 0).toLocaleString(), "近7天 " + (ak.week.read ?? 0).toLocaleString()) +
+        statCard("KV 写 · 今日(官方)", (ak.today.write ?? 0).toLocaleString(), "近7天 " + (ak.week.write ?? 0).toLocaleString()) +
+        statCard("KV 键/存储", k.keyCount ?? "?", "存储实测 " + storage + " · 删 " + (ak.today.delete ?? 0) + " 列 " + (ak.today.list ?? 0));
+      el("usage-bars").innerHTML =
+        quotaBar("Workers 请求(官方·今日)", aw.accountToday ?? 0, w.freeTierPerDay, "次") +
+        quotaBar("KV 写(官方·今日)", ak.today.write ?? 0, k.freeWritesPerDay, "次") +
+        quotaBar("KV 读(官方·今日)", ak.today.read ?? 0, k.freeReadsPerDay, "次");
+      el("usage-note").textContent =
+        `官方口径:GraphQL Analytics(账号 ${acc.fetchedAt.slice(11, 19)} UTC 抓取),与 Dashboard 计费一致;下方灰字为自报近似对照。官方仅提供今日/近7天,更早累计看自报值。`;
+    } else if (acc && !acc.ok) {
+      el("usage-bars").innerHTML =
+        quotaBar("Workers 请求(今日)", w.requestsToday ?? 0, w.freeTierPerDay, "次") +
+        quotaBar("KV 写(今日)", k.writesToday ?? 0, k.freeWritesPerDay, "次") +
+        quotaBar("KV 读(今日)", k.readsToday ?? 0, k.freeReadsPerDay, "次");
+      el("usage-note").textContent = `自报近似值(官方查询失败:${acc.error})。计数内存累积、每 10 分钟写入 KV,尾部请求可能未计入。`;
+    } else {
+      el("usage-bars").innerHTML =
+        quotaBar("Workers 请求(今日)", w.requestsToday ?? 0, w.freeTierPerDay, "次") +
+        quotaBar("KV 写(今日)", k.writesToday ?? 0, k.freeWritesPerDay, "次") +
+        quotaBar("KV 读(今日)", k.readsToday ?? 0, k.freeReadsPerDay, "次");
+      el("usage-note").textContent =
+        `统计日 ${u.day}(UTC)· 自报近似值:内存累积、每 10 分钟批量写入 KV,尾部请求可能未计入`;
+    }
   }
   function fmtDuration(sec) {
     if (sec < 60) return sec + "s";

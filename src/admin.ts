@@ -20,6 +20,7 @@ import { testUpstreamUrl } from "./doh";
 import { bareContentType, jsonResponse, methodNotAllowed, textResponse, WORKER_VERSION } from "./httputil";
 import { ensureStatsClock, getGlobalStats, getMetricsStore, getUsageSnapshot, isolateStats, reliabilityOf, scoreOf, statsSnapshot, uptimeSeconds } from "./metrics";
 import { generatePathToken, buildPath } from "./pathgen";
+import { fetchAccountUsage } from "./usage";
 import type { Config, Env, WorkerCtx } from "./types";
 
 export async function handleAdminApi(request: Request, env: Env, ctx: WorkerCtx): Promise<Response> {
@@ -161,8 +162,27 @@ export async function handleAdminApi(request: Request, env: Env, ctx: WorkerCtx)
     } catch {
       // list 失败不阻塞用量展示
     }
+    // 实测存储字节数:逐键读回取长度(键少,读额度 10 万/日,可忽略)。
+    let storageBytes: number | null = null;
+    if (keys.length > 0 && keys.length <= 100) {
+      try {
+        const values = await Promise.all(keys.map((k) => env.CONFIG_KV.get(k)));
+        storageBytes = keys.reduce((n, k, i) => n + k.length + (values[i]?.length ?? 0), 0);
+      } catch {
+        // 保持 null
+      }
+    }
+    // 官方口径(GraphQL Analytics):配置了账号 token 才可用。
+    let accurate: Awaited<ReturnType<typeof fetchAccountUsage>> | { ok: false; error: string } | null = null;
+    if (env.CF_ACCOUNT_TOKEN && env.CF_ACCOUNT_ID) {
+      try {
+        accurate = await fetchAccountUsage(env.CF_ACCOUNT_TOKEN, env.CF_ACCOUNT_ID, "doh-workers-ui");
+      } catch (e) {
+        accurate = { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    }
     return jsonResponse({
-      note: "self-reported counters, async-aggregated into KV (approximate); KV ops counted via binding wrapper",
+      note: "self-reported counters, async-aggregated into KV (approximate); official numbers via GraphQL when CF_ACCOUNT_TOKEN is set",
       day: usage.day,
       workers: {
         requestsTotal: usage.totals.requests,
@@ -178,10 +198,12 @@ export async function handleAdminApi(request: Request, env: Env, ctx: WorkerCtx)
         readBytesTotal: usage.totals.kvReadBytes,
         writeBytesTotal: usage.totals.kvWriteBytes,
         keyCount: keys.length,
+        storageBytes,
         keys: keys.sort(),
         freeWritesPerDay: 1000,
         freeReadsPerDay: 100000,
       },
+      accurate,
     });
   }
 

@@ -69,6 +69,9 @@ export interface Env {
   ADMIN_SECRET: string;
   /** Isolate config cache TTL in seconds (string var). */
   CONFIG_CACHE_TTL?: string;
+  /** Optional: accurate account usage via GraphQL Analytics (both required). */
+  CF_ACCOUNT_TOKEN?: string;
+  CF_ACCOUNT_ID?: string;
 }
 
 /** Runtime context for waitUntil, kept structural so tests can fake it. */
