@@ -156,6 +156,18 @@
     el("path-box").textContent = currentConfig.doh.path;
   }
 
+  // 注:这两个工具函数曾被一次重构误删,导致 refreshDashboard 抛
+  // ReferenceError、后续面板全部不渲染。改动用例见 test/ui-helpers.test.ts。
+  function fmtDuration(sec) {
+    if (sec == null) return "—";
+    if (sec < 60) return sec + "s";
+    if (sec < 3600) return Math.round(sec / 60) + "m";
+    return Math.round(sec / 3600) + "h";
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
   function bytesHuman(n) {
     if (n == null) return "";
     return n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.round(n / 1024) + " KB";
