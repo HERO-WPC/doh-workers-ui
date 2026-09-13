@@ -14,3 +14,5 @@ wrangler.jsonc.local
 __pycache__/
 .tmp-*.json
 .tmp-served-*
+wrangler.jsonc.bak*
+.tmp-*
