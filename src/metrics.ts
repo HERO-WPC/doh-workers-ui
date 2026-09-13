@@ -42,6 +42,8 @@ export class MetricsStore {
   private dirty = false;
   private lastFlush = 0;
   private loaded = false;
+  private blobMissing = false;
+  private legacyTried = new Set<string>();
 
   constructor(private kv: { get(key: string): Promise<string | null>; put(key: string, value: string): Promise<void> } | null) {}
 
@@ -61,9 +63,32 @@ export class MetricsStore {
             this.mem.set(id, { ...emptyMetrics(), ...v });
           }
         }
+        this.blobMissing = false;
+      } else {
+        // blob 尚不存在(旧版是每个上游一个 key,且可能因写额度打满从未写过
+        // 新 blob):标记为缺失,get() 时回读旧 key 找回历史——纯读取零写入。
+        this.blobMissing = true;
       }
     } catch {
-      // Treat KV errors as "no history".
+      this.blobMissing = true;
+    }
+  }
+
+  /** 旧版单 key 格式(metrics:<id>)的历史回读;成功即并入内存,首次 flush 时
+   *  会把合并结果写进新 blob,此后不再回读。 */
+  private async loadLegacy(id: string): Promise<void> {
+    if (!this.kv || this.legacyTried.has(id)) return;
+    this.legacyTried.add(id);
+    try {
+      const raw = await this.kv.get(`metrics:${id}`);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as ProviderMetrics;
+      if (parsed && typeof parsed === "object" && typeof parsed.ok === "number") {
+        const merged = this.mem.get(id) ?? emptyMetrics();
+        this.mem.set(id, { ...merged, ...parsed });
+      }
+    } catch {
+      // 旧 key 不存在或损坏:保持现状
     }
   }
 
@@ -71,6 +96,9 @@ export class MetricsStore {
     const cached = this.mem.get(id);
     if (cached) return cached;
     await this.loadAll();
+    if (this.blobMissing && !this.mem.has(id)) {
+      await this.loadLegacy(id);
+    }
     const m = this.mem.get(id) ?? emptyMetrics();
     this.mem.set(id, m);
     return m;

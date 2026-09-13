@@ -28,3 +28,36 @@ describe("isolate stats clock", () => {
     expect(snap.uptimeSeconds).toBe(0);
   });
 });
+
+describe("MetricsStore legacy fallback", () => {
+  class FakeKV {
+    store = new Map<string, string>();
+    async get(key: string) { return this.store.get(key) ?? null; }
+    async put(key: string, value: string) { this.store.set(key, value); }
+  }
+  it("回读旧版 metrics:<id> key 找回历史(blob 缺失时)", async () => {
+    const { MetricsStore } = await import("../src/metrics");
+    const kv = new FakeKV();
+    kv.store.set("metrics:cloudflare", JSON.stringify({ ok: 120, fail: 3, timeout: 1, rttEmaMs: 88, lastSuccess: "x", lastFailure: null, updatedAt: "y" }));
+    const s = new MetricsStore(kv);
+    const m = await s.get("cloudflare");
+    expect(m.ok).toBe(120);
+    expect(m.rttEmaMs).toBe(88);
+    // 二次读取不重复回读
+    const m2 = await s.get("cloudflare");
+    expect(m2.ok).toBe(120);
+    // blob 缺失时其它 id 正常返回空指标
+    const g = await s.get("google");
+    expect(g.ok).toBe(0);
+  });
+
+  it("blob 存在时优先用 blob,不回读旧 key", async () => {
+    const { MetricsStore } = await import("../src/metrics");
+    const kv = new FakeKV();
+    kv.store.set("metrics", JSON.stringify({ google: { ok: 5, fail: 0, timeout: 0, rttEmaMs: 40, lastSuccess: null, lastFailure: null, updatedAt: null } }));
+    kv.store.set("metrics:google", JSON.stringify({ ok: 999, fail: 0, timeout: 0, rttEmaMs: 999, lastSuccess: null, lastFailure: null, updatedAt: null }));
+    const s = new MetricsStore(kv);
+    const m = await s.get("google");
+    expect(m.ok).toBe(5);   // 来自 blob,而不是旧 key 的 999
+  });
+});
