@@ -10,9 +10,11 @@
 
 import type { ProviderMetrics } from "./types";
 
-// 10 分钟:KV 免费版限 1000 写/天(账号级),全屋 DNS 24h 流经 Worker,
-// 节流太短会把当日写入额度打满。统计精度 10 分钟对监控足够。
-export const FLUSH_INTERVAL_MS = 600_000;
+// 30 分钟:KV 免费版限 1000 写/天(账号级)。写入量与流量无关,而与
+// "活过 flush 周期的 isolate 个数"成正比;10 分钟时每个 isolate 每天都会写,
+// 加上部署/多 colo,实测日均 ~500 写,一度打满额度导致写入全部被拒。
+// 放宽到 30 分钟后,短命 isolate 不再产生写入,写量降到 ~1/3。
+export const FLUSH_INTERVAL_MS = 1_800_000;
 
 export function emptyMetrics(): ProviderMetrics {
   return {
