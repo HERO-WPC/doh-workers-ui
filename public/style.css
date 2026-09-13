@@ -188,3 +188,28 @@ td code { font-size: 12px; color: var(--muted); word-break: break-all; }
   border-radius: 10px;
   z-index: 100;
 }
+
+/* 用量与额度 */
+.quota-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+}
+.quota-label { min-width: 150px; font-size: 13px; color: var(--muted); }
+.quota-track {
+  flex: 1;
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.quota-fill {
+  height: 100%;
+  background: var(--accent, #4493f8);
+  border-radius: 4px;
+  transition: width .3s;
+}
+.quota-fill.warn { background: #d29922; }
+.quota-fill.danger { background: #f85149; }
+.quota-num { font-size: 12px; color: var(--muted); white-space: nowrap; }

@@ -98,7 +98,9 @@
   }
 
   async function refreshDashboard() {
-    const [health, stats, config] = await Promise.all([get("/health"), get("/stats"), get("/config")]);
+    const [health, stats, config, usage] = await Promise.all([
+      get("/health"), get("/stats"), get("/config"), get("/usage").catch(() => null),
+    ]);
     currentConfig = config.config;
     el("worker-version").textContent = "v" + (health.version || "");
     el("doh-url").textContent = config.dohUrl;
@@ -121,6 +123,8 @@
     el("isolate-note").textContent =
       `本 isolate:已处理 ${stats.isolate.requests} 次请求,存活 ${fmtDuration(stats.isolate.uptimeSeconds)}(计数器随 isolate 回收重置,全局累计见上)`;
 
+    renderUsage(usage);
+
     el("upstream-health").innerHTML = stats.upstreams
       .map(
         (u) => `<div class="row">
@@ -139,6 +143,38 @@
   function bytesHuman(n) {
     if (n == null) return "";
     return n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.round(n / 1024) + " KB";
+  }
+
+  function quotaBar(label, used, quota, unit) {
+    const pct = Math.min(100, Math.round(((used / quota) * 100)));
+    const cls = pct >= 90 ? "danger" : pct >= 60 ? "warn" : "";
+    return `<div class="quota-row">
+      <span class="quota-label">${label}</span>
+      <div class="quota-track"><div class="quota-fill ${cls}" style="width:${pct}%"></div></div>
+      <span class="quota-num">${used.toLocaleString()} / ${quota.toLocaleString()} ${unit || ""} (${pct}%)</span>
+    </div>`;
+  }
+
+  function renderUsage(u) {
+    if (!u || !u.workers) {
+      el("usage-cards").innerHTML = "";
+      el("usage-bars").innerHTML = "";
+      el("usage-note").textContent = "用量数据暂不可用。";
+      return;
+    }
+    const w = u.workers, k = u.kv;
+    el("usage-cards").innerHTML =
+      statCard("Workers 请求 · 今日", (w.requestsToday ?? 0).toLocaleString(), "免费额度 " + w.freeTierPerDay.toLocaleString() + "/日") +
+      statCard("Workers 请求 · 累计", (w.requestsTotal ?? 0).toLocaleString(), "自统计开启以来") +
+      statCard("KV 读 · 今日", (k.readsToday ?? 0).toLocaleString(), "累计 " + (k.readsTotal ?? 0).toLocaleString()) +
+      statCard("KV 写 · 今日", (k.writesToday ?? 0).toLocaleString(), "累计 " + (k.writesTotal ?? 0).toLocaleString()) +
+      statCard("KV 键数量", k.keyCount ?? "?", "写入流量 " + bytesHuman(k.writeBytesTotal) + " · 读取 " + bytesHuman(k.readBytesTotal));
+    el("usage-bars").innerHTML =
+      quotaBar("Workers 请求(今日)", w.requestsToday ?? 0, w.freeTierPerDay, "次") +
+      quotaBar("KV 写(今日)", k.writesToday ?? 0, k.freeWritesPerDay, "次") +
+      quotaBar("KV 读(今日)", k.readsToday ?? 0, k.freeReadsPerDay, "次");
+    el("usage-note").textContent =
+      `统计日 ${u.day}(UTC)· 计数为本 Worker 自报近似值:内存累积、每 10 分钟批量写入 KV,尾部请求可能未计入`;
   }
   function fmtDuration(sec) {
     if (sec < 60) return sec + "s";

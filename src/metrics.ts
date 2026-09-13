@@ -143,6 +143,12 @@ export const isolateStats = {
   upstreamTimeouts: 0,
   rttSumMs: 0,
   servedFromUpstream: 0,
+  // KV 操作用量:由 countKv() 包装器累加,随 stats 一起批量落 KV。
+  kvReads: 0,
+  kvWrites: 0,
+  kvLists: 0,
+  kvReadBytes: 0,
+  kvWriteBytes: 0,
 };
 
 /** Start the isolate clock on first use (call from request handlers). */
@@ -170,6 +176,9 @@ export function statsSnapshot(): Record<string, number | string | null> {
     upstreamFail: isolateStats.upstreamFail,
     upstreamTimeouts: isolateStats.upstreamTimeouts,
     upstreamAvgRttMs: avgRtt,
+    kvReads: isolateStats.kvReads,
+    kvWrites: isolateStats.kvWrites,
+    kvLists: isolateStats.kvLists,
   };
 }
 
@@ -192,6 +201,11 @@ const STATS_COUNTER_KEYS = [
   "upstreamTimeouts",
   "servedFromUpstream",
   "rttSumMs",
+  "kvReads",
+  "kvWrites",
+  "kvLists",
+  "kvReadBytes",
+  "kvWriteBytes",
 ] as const;
 
 type CounterKey = (typeof STATS_COUNTER_KEYS)[number];
@@ -220,6 +234,10 @@ function readCounters(obj: unknown): Partial<CounterMap> {
   return out;
 }
 
+function utcDay(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 /** Throttled KV flush of counter deltas. Call from request handlers. */
 export function flushStats(
   kv: { get(key: string): Promise<string | null>; put(key: string, value: string): Promise<void> },
@@ -230,14 +248,22 @@ export function flushStats(
   lastStatsFlush = now;
   waitUntil(
     (async () => {
-      const stored = readCounters(JSON.parse((await kv.get(STATS_KV_KEY)) ?? "{}"));
+      const storedRaw = safeParse(await kv.get(STATS_KV_KEY));
+      const stored = readCounters(storedRaw);
+      const storedDay = typeof storedRaw?.day === "string" ? storedRaw.day : null;
+      const storedToday = readCounters(storedRaw?.today);
       const current = countersSnapshot();
       const base = persistedCounters ?? ({} as Partial<CounterMap>);
       const merged: CounterMap = { ...current };
+      const todayStr = utcDay();
+      const todayBase = storedDay === todayStr ? storedToday : ({} as Partial<CounterMap>);
+      const today: CounterMap = { ...current };
       for (const k of STATS_COUNTER_KEYS) {
-        merged[k] = (stored[k] ?? 0) + Math.max(0, (current[k] ?? 0) - (base[k] ?? 0));
+        const delta = Math.max(0, (current[k] ?? 0) - (base[k] ?? 0));
+        merged[k] = (stored[k] ?? 0) + delta;
+        today[k] = (todayBase[k] ?? 0) + delta;
       }
-      await kv.put(STATS_KV_KEY, JSON.stringify(merged));
+      await kv.put(STATS_KV_KEY, JSON.stringify({ ...merged, day: todayStr, today }));
       persistedCounters = current;
     })().catch(() => {
       // Re-arm soon: clear the throttle so the next request retries.
@@ -246,25 +272,91 @@ export function flushStats(
   );
 }
 
+function safeParse(raw: string | null): Record<string, unknown> {
+  try {
+    const v = raw ? JSON.parse(raw) : null;
+    return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+export interface UsageSnapshot {
+  totals: CounterMap & { upstreamAvgRttMs: number | null };
+  today: Partial<CounterMap>;
+  day: string;
+}
+
 /**
  * Global totals for display: KV aggregates + this isolate's unflushed deltas.
  * Reads KV every call — this endpoint is admin-only, never on the DNS path.
+ * `today` is a UTC-day bucket, reset when a flush happens on a new UTC day.
  */
+export async function getUsageSnapshot(
+  kv: { get(key: string): Promise<string | null> },
+): Promise<UsageSnapshot> {
+  const storedRaw = safeParse(await kv.get(STATS_KV_KEY));
+  const stored = readCounters(storedRaw);
+  const storedDay = typeof storedRaw?.day === "string" ? storedRaw.day : null;
+  const storedToday = readCounters(storedRaw?.today);
+  const current = countersSnapshot();
+  const base = persistedCounters ?? ({} as Partial<CounterMap>);
+  const todayStr = utcDay();
+  const todayBase = storedDay === todayStr ? storedToday : ({} as Partial<CounterMap>);
+  const totals = {} as CounterMap & { upstreamAvgRttMs: number | null };
+  const today = {} as CounterMap;
+  for (const k of STATS_COUNTER_KEYS) {
+    const delta = Math.max(0, (current[k] ?? 0) - (base[k] ?? 0));
+    totals[k] = (stored[k] ?? 0) + delta;
+    today[k] = (todayBase[k] ?? 0) + delta;
+  }
+  totals.upstreamAvgRttMs = totals.upstreamOk > 0 ? Math.round(totals.rttSumMs / totals.upstreamOk) : null;
+  return { totals, today, day: todayStr };
+}
+
+/** Backward-compatible alias used by /admin/api/stats. */
 export async function getGlobalStats(
   kv: { get(key: string): Promise<string | null> },
 ): Promise<CounterMap & { upstreamAvgRttMs: number | null }> {
-  let stored: Partial<CounterMap> = {};
-  try {
-    stored = readCounters(JSON.parse((await kv.get(STATS_KV_KEY)) ?? "{}"));
-  } catch {
-    stored = {};
+  return (await getUsageSnapshot(kv)).totals;
+}
+
+/**
+ * Wrap a KV namespace so every get/put/list/delete is counted into
+ * isolateStats. Values sized by (key + value) UTF-16 length — an estimate,
+ * good enough for quota dashboards. Install once per isolate (index.ts).
+ * Defensive: missing methods (test fakes) pass through uncounted.
+ */
+export function countKv(kv: KVNamespace): KVNamespace {
+  const s = isolateStats;
+  const wrapped: Record<string, unknown> = {
+    get: async (key: string, opts?: KVNamespaceGetOptions<string>) => {
+      s.kvReads += 1;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const v = await (kv.get as (k: string, o?: unknown) => Promise<unknown>)(key, opts);
+      if (typeof v === "string") s.kvReadBytes += key.length + v.length;
+      return v;
+    },
+    put: async (key: string, value: string, opts?: KVNamespacePutOptions) => {
+      s.kvWrites += 1;
+      s.kvWriteBytes += key.length + value.length;
+      return kv.put(key, value, opts);
+    },
+  };
+  if (typeof (kv as { list?: unknown }).list === "function") {
+    wrapped.list = async (opts?: KVNamespaceListOptions) => {
+      s.kvLists += 1;
+      return kv.list(opts);
+    };
   }
-  const current = countersSnapshot();
-  const base = persistedCounters ?? ({} as Partial<CounterMap>);
-  const out = {} as CounterMap & { upstreamAvgRttMs: number | null };
-  for (const k of STATS_COUNTER_KEYS) {
-    out[k] = (stored[k] ?? 0) + Math.max(0, (current[k] ?? 0) - (base[k] ?? 0));
+  if (typeof (kv as { delete?: unknown }).delete === "function") {
+    wrapped.delete = async (key: string) => {
+      s.kvWrites += 1;
+      return kv.delete(key);
+    };
   }
-  out.upstreamAvgRttMs = out.upstreamOk > 0 ? Math.round(out.rttSumMs / out.upstreamOk) : null;
-  return out;
+  if (typeof (kv as { getWithMetadata?: unknown }).getWithMetadata === "function") {
+    wrapped.getWithMetadata = kv.getWithMetadata.bind(kv);
+  }
+  return wrapped as unknown as KVNamespace;
 }

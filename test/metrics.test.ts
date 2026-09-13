@@ -84,3 +84,77 @@ describe("global stats persistence", () => {
     expect(globalAfter.upstreamAvgRttMs).toBe(100); // only isolate A contributed RTT
   });
 });
+
+describe("usage day-bucket", () => {
+  class FakeKV {
+    store = new Map<string, string>();
+    async get(key: string) {
+      return this.store.get(key) ?? null;
+    }
+    async put(key: string, value: string) {
+      this.store.set(key, value);
+    }
+  }
+
+  function makeCtx() {
+    const promises: Promise<unknown>[] = [];
+    return { promises, waitUntil: (p: Promise<unknown>) => promises.push(p) };
+  }
+
+  it("keeps totals across a stale-day seed but starts today fresh", async () => {
+    const kv = new FakeKV();
+    const today = new Date().toISOString().slice(0, 10);
+    // Pre-seed: yesterday's totals and a stale today-bucket.
+    kv.store.set("stats", JSON.stringify({
+      requests: 100,
+      kvWrites: 50,
+      day: "2000-01-01",
+      today: { requests: 7, kvWrites: 3 },
+    }));
+
+    const m = await freshMetrics();
+    m.isolateStats.requests = 5;
+    m.isolateStats.kvWrites = 2;
+    const ctx = makeCtx();
+    m.flushStats(kv, ctx.waitUntil);
+    await Promise.allSettled(ctx.promises);
+
+    const usage = await m.getUsageSnapshot(kv);
+    expect(usage.totals.requests).toBe(105); // 100 stored + 5 delta
+    expect(usage.totals.kvWrites).toBe(52);
+    expect(usage.day).toBe(today);
+    expect(usage.today.requests).toBe(5); // stale 7 discarded, fresh delta only
+    expect(usage.today.kvWrites).toBe(2);
+  });
+
+  it("counts KV operations through the countKv wrapper", async () => {
+    const m = await freshMetrics();
+    class RichKV {
+      store = new Map<string, string>();
+      reads = 0;
+      async get(key: string) {
+        this.reads += 1;
+        return this.store.get(key) ?? null;
+      }
+      async put(key: string, value: string) {
+        this.store.set(key, value);
+      }
+      async list() {
+        return { keys: [], list_complete: true };
+      }
+    }
+    const raw = new RichKV();
+    const wrapped = m.countKv(raw as unknown as import("../src/types").Env["CONFIG_KV"]);
+    await wrapped.put("config", "{\"v\":1}");
+    await wrapped.get("config");
+    await wrapped.get("stats");
+    await wrapped.list();
+    expect(m.isolateStats.kvReads).toBe(2);
+    expect(m.isolateStats.kvWrites).toBe(1);
+    expect(m.isolateStats.kvLists).toBe(1);
+    expect(m.isolateStats.kvReadBytes).toBeGreaterThan(0);
+    expect(m.isolateStats.kvWriteBytes).toBeGreaterThan(0);
+    // The underlying store still worked through the wrapper.
+    expect(raw.store.get("config")).toBe('{"v":1}');
+  });
+});
