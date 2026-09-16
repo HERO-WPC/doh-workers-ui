@@ -146,3 +146,31 @@ describe("adaptive ordering", () => {
     expect(slow.timeout).toBe(0);
   }, 10000);
 });
+
+// —— 审计修复:CNAME 链无终结记录 → 继续下一个上游 ——
+describe("incomplete answer fallback", () => {
+  it("上游只回 CNAME(无 A)时,继续尝试返回完整应答的上游", async () => {
+    // 自定义 fetchImpl:按 URL 返回不同报文(a=CNAME-only, b=完整 A)
+    const mk = (body: Buffer) =>
+      new Response(body, { status: 200, headers: { "content-type": "application/dns-message" } });
+    const cnameOnly = packet.encode({
+      id: 0x0abc, type: "response", flags: 0x8180,
+      questions: [{ name: "example.com", type: "A" }],
+      answers: [{ name: "example.com", type: "CNAME", ttl: 300, data: "target.example.net" }],
+    } as unknown as packet.Packet);
+    const fullA = packet.encode({
+      id: 0x0abc, type: "response", flags: 0x8180,
+      questions: [{ name: "example.com", type: "A" }],
+      answers: [{ name: "target.example.net", type: "A", ttl: 300, data: "1.2.3.4" }],
+    } as unknown as packet.Packet);
+    const fetchImpl = (async (input: unknown) => {
+      const u = String(typeof input === "string" ? input : (input as { url?: string }).url ?? input);
+      return mk(u.includes("a.test") ? cnameOnly : fullA);
+    }) as unknown as typeof globalThis.fetch;
+
+    const cfg = makeConfig({ mode: "race", raceCount: 1 }, [upstream("a", 1), upstream("b", 2)]);
+    const r = await resolveQuery(makeWire(), Q, { cfg, metrics: store(), fetchImpl });
+    expect(r.upstreamId).toBe("b"); // 不应停留在 CNAME-only 的 a
+    expect((r.answer.packet.answers ?? []).some((x) => String(x.type) === "A")).toBe(true);
+  });
+});

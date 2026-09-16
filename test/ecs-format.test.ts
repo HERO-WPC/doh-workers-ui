@@ -49,3 +49,36 @@ describe("ECS IPv6 截断格式化", () => {
     expect(ecsKeyString(spec)).toBe("ecs=1/24:203.0.113.0");
   });
 });
+
+// —— IPv6/ECS 专项审计追加用例 ——
+describe("IPv6 ECS 边界用例", () => {
+  const cases: Array<[string, string]> = [
+    ["::1/128", "::1"],
+    ["::/0", "::"],
+    ["1::/16", "1::"],
+    ["2001:db8::/56", "2001:db8::"],
+    ["2001:db8:abcd:1234::1/128", "2001:db8:abcd:1234::1"],
+    ["ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],
+    ["fe80::1/64", "fe80::"],
+    ["fd6a:5c2d:5a31::202/64", "fd6a:5c2d:5a31::"],
+    ["2606:4700:3030::ac46:8929/56", "2606:4700:3030::"],
+    ["2001:db8:0:0:0:0:0:1/128", "2001:db8::1"],
+    ["2001:0db8::/48", "2001:db8::"],
+  ];
+  for (const [subnet, expected] of cases) {
+    it(`${subnet} → ${expected}`, () => {
+      const spec = parseFixedSubnet(subnet);
+      expect(spec).not.toBeNull();
+      expect(spec!.address).toBe(expected);
+      // 幂等:再截断一次结果不变
+      const again = parseFixedSubnet(`${spec!.address}/${spec!.sourcePrefix}`);
+      expect(again!.address).toBe(spec!.address);
+    });
+  }
+
+  it("IPv4-mapped IPv6 应被拒绝而不是误解析", () => {
+    // ::ffff:192.0.2.1 不应被当作 4 个 hex 段静默编出错误字节
+    const spec = parseFixedSubnet("::ffff:192.0.2.1/128");
+    expect(spec).toBeNull(); // 期望:拒绝
+  });
+});
