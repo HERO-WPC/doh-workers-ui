@@ -144,6 +144,8 @@ async function trySequentially(
   records: UpstreamAttemptRecord[],
 ): Promise<UpstreamAttemptRecord & { result: Awaited<ReturnType<typeof queryUpstream>> }> {
   let last: UpstreamAttemptRecord & { result: Awaited<ReturnType<typeof queryUpstream>> } | null = null;
+  // 单独的"不完整但成功"暂存:后续出现失败时不能覆盖掉它
+  let bestIncomplete: UpstreamAttemptRecord & { result: Awaited<ReturnType<typeof queryUpstream>> } | null = null;
   for (const upstream of candidates) {
     const r = await queryUpstream(upstream, wire, q, {
       timeoutMs: upstream.timeout || 2500,
@@ -155,10 +157,9 @@ async function trySequentially(
       records.push(rec);
       // 应答不完整(CNAME 链无终结记录)且还有候选 → 记账成功但继续找
       // 更完整的应答(如某上游只回 CNAME 不回 AAAA,而其它上游会回)。
-      // 同时把它记为当前最好结果:若后面全部失败,至少返回这个部分应答。
       const moreLeft = candidates.indexOf(upstream) < candidates.length - 1;
       if (moreLeft && isIncompleteAnswer(r.answer, q.qtype)) {
-        last = rec;
+        bestIncomplete = bestIncomplete ?? rec;
         continue;
       }
       return rec;
@@ -168,7 +169,8 @@ async function trySequentially(
     records.push(rec);
     last = rec;
   }
-  return last ?? { id: "?", ok: false, error: "no upstreams", result: { upstreamId: "?", ok: false, error: "no upstreams" } };
+  // 兜底优先级:完整成功 > 不完整成功 > 失败 > 空
+  return (bestIncomplete ?? last) ?? { id: "?", ok: false, error: "no upstreams", result: { upstreamId: "?", ok: false, error: "no upstreams" } };
 }
 
 export async function resolveQuery(
@@ -226,7 +228,8 @@ export async function resolveQuery(
   // 尝试剩余上游,寻找更完整的应答(如 AliDNS 会补出 CF/Google 缺失的 AAAA)。
   if (rest.length > 0) {
     const win = await trySequentially(rest, wire, q, deps, records);
-    if (win.ok && win.result.answer && !isIncompleteAnswer(win.result.answer, q.qtype)) {
+    // 回退命中任何应答(完整或不完整)都返回:不完整应答总比 502 好
+    if (win.ok && win.result.answer) {
       return { buf: win.result.buf!, upstreamId: win.id, rttMs: win.rttMs!, answer: win.result.answer, attempts: records };
     }
     // 超时归类统一看全部尝试记录,而不是只看最后一次串行尝试:
