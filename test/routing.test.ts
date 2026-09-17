@@ -173,4 +173,22 @@ describe("incomplete answer fallback", () => {
     expect(r.upstreamId).toBe("b"); // 不应停留在 CNAME-only 的 a
     expect((r.answer.packet.answers ?? []).some((x) => String(x.type) === "A")).toBe(true);
   });
+
+  it("所有上游都只回 CNAME 时,返回部分应答而不是报错", async () => {
+    const mk = (body: Buffer) =>
+      new Response(body, { status: 200, headers: { "content-type": "application/dns-message" } });
+    const cnameOnly = packet.encode({
+      id: 0x0abc, type: "response", flags: 0x8180,
+      questions: [{ name: "example.com", type: "A" }],
+      answers: [{ name: "example.com", type: "CNAME", ttl: 300, data: "target.example.net" }],
+    } as unknown as packet.Packet);
+    const fetchImpl = (async () => mk(cnameOnly)) as unknown as typeof globalThis.fetch;
+
+    const cfg = makeConfig({ mode: "race", raceCount: 2 }, [upstream("a", 1), upstream("b", 2)]);
+    const r = await resolveQuery(makeWire(), Q, { cfg, metrics: store(), fetchImpl });
+    // 不应抛 AllUpstreamsFailedError:客户端拿到 CNAME 链(总比 502 好)
+    expect(["a", "b"]).toContain(r.upstreamId);
+    expect((r.answer.packet.answers ?? []).some((x) => String(x.type) === "CNAME")).toBe(true);
+  });
 });
+

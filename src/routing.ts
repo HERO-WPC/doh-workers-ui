@@ -155,8 +155,12 @@ async function trySequentially(
       records.push(rec);
       // 应答不完整(CNAME 链无终结记录)且还有候选 → 记账成功但继续找
       // 更完整的应答(如某上游只回 CNAME 不回 AAAA,而其它上游会回)。
+      // 同时把它记为当前最好结果:若后面全部失败,至少返回这个部分应答。
       const moreLeft = candidates.indexOf(upstream) < candidates.length - 1;
-      if (moreLeft && isIncompleteAnswer(r.answer, q.qtype)) continue;
+      if (moreLeft && isIncompleteAnswer(r.answer, q.qtype)) {
+        last = rec;
+        continue;
+      }
       return rec;
     }
     deps.metrics.record(upstream.id, { timeout: r.timedOut });
@@ -205,6 +209,17 @@ export async function resolveQuery(
       attempts: records,
     };
   }
+  // 竞速胜者应答不完整:先暂存。若后续找不到更完整的,至少返回它
+  // (部分应答远好于 502——客户端还能凭 CNAME 自行解析)。
+  const incomplete =
+    raceWinner.ok && raceWinner.result?.answer
+      ? {
+          buf: raceWinner.result.buf!,
+          upstreamId: raceWinner.id,
+          rttMs: raceWinner.rttMs!,
+          answer: raceWinner.result.answer,
+        }
+      : null;
 
   // Failover over the remaining candidates, in order.
   // 也会兜住"竞速胜者应答不完整(CNAME 链无终结记录)"的情形:此时按顺序
@@ -220,14 +235,8 @@ export async function resolveQuery(
   }
 
   // 没有 rest:race 胜者即使不完整也只能用它(总比报错好)
-  if (raceWinner.ok && raceWinner.result?.answer) {
-    return {
-      buf: raceWinner.result.buf!,
-      upstreamId: raceWinner.id,
-      rttMs: raceWinner.rttMs!,
-      answer: raceWinner.result.answer,
-      attempts: records,
-    };
+  if (incomplete) {
+    return { buf: incomplete.buf, upstreamId: incomplete.upstreamId, rttMs: incomplete.rttMs, answer: incomplete.answer, attempts: records };
   }
 
   const lastTimedOut = records.some((r) => r.timedOut);
