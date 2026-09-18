@@ -8,8 +8,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const appJs = readFileSync(join(__dirname, "..", "public", "app.js"), "utf8");
+const indexHtml = readFileSync(join(__dirname, "..", "public", "index.html"), "utf8");
 
-const HELPERS = ["fmtDuration", "escapeHtml", "bytesHuman", "statCard", "quotaBar", "badgeFor", "el"];
+const HELPERS = ["fmtDuration", "escapeHtml", "bytesHuman", "statCard", "quotaBar", "badgeFor", "el", "renderResolveForm", "renderResolveResult", "resolveBlock", "resolveStatusBadge"];
 
 /** 函数可能写成 function 声明,也可能写成 const 箭头函数 */
 function isDefined(fn: string): boolean {
@@ -24,8 +25,24 @@ describe("public/app.js helper definitions", () => {
   }
 
   it("refreshDashboard 用到的函数都已定义", () => {
-    for (const fn of ["fmtDuration", "escapeHtml", "bytesHuman", "statCard", "badgeFor"]) {
+    for (const fn of ["fmtDuration", "escapeHtml", "bytesHuman", "statCard", "badgeFor", "renderResolveForm"]) {
       expect(isDefined(fn)).toBe(true);
+    }
+  });
+
+  // app.js 对 DNS 解析测试面板做了"节点不存在就跳过"的容错(旧 index.html 被缓存
+  // 时不能连累整个控制台),所以必须同时钉住 HTML 侧真的有这些节点,否则面板会
+  // 静默不工作。
+  it("index.html 提供 DNS 解析测试面板所需的节点", () => {
+    for (const marker of [
+      'data-tab="resolve"',
+      'id="tab-resolve"',
+      'id="resolve-form"',
+      'id="resolve-provider"',
+      'id="resolve-results"',
+      'id="resolve-result-card"',
+    ]) {
+      expect(indexHtml).toContain(marker);
     }
   });
 });

@@ -20,6 +20,7 @@ import { testUpstreamUrl } from "./doh";
 import { bareContentType, jsonResponse, methodNotAllowed, textResponse, WORKER_VERSION } from "./httputil";
 import { ensureStatsClock, getMetricsStore, isolateStats, reliabilityOf, scoreOf, statsSnapshot, uptimeSeconds } from "./metrics";
 import { generatePathToken, buildPath } from "./pathgen";
+import { parseResolveTestInput, runResolveTest } from "./resolvetest";
 import { fetchAccountUsage } from "./usage";
 import type { Config, Env, WorkerCtx } from "./types";
 
@@ -133,6 +134,18 @@ export async function handleAdminApi(request: Request, env: Env, ctx: WorkerCtx)
     }
     const result = await testUpstreamUrl(cfg, target);
     return jsonResponse(result);
+  }
+
+  // ---- resolve test(自选域名 + 自选上游,查看 A / AAAA 记录) ----
+  if (route === "/resolve-test") {
+    if (method !== "POST") return methodNotAllowed("POST");
+    const body = await readJson(request);
+    if (!body.ok) return body.response;
+    const parsed = parseResolveTestInput(body.value, cfg);
+    if (!parsed.ok) return jsonResponse({ error: parsed.error }, 400);
+    // 直连所选上游,刻意绕过本机缓存与路由:结果必须可归因到该服务商。
+    // 不写缓存、不记 metrics,所以跑测试不影响评分与 KV 写额度。
+    return jsonResponse(await runResolveTest(parsed.input));
   }
 
   // ---- regenerate path ----

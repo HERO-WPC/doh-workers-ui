@@ -23,6 +23,7 @@ export async function loadModules() {
     upstream: await import("../src/upstream"),
     doh: await import("../src/doh"),
     admin: await import("../src/admin"),
+    resolvetest: await import("../src/resolvetest"),
     index: await import("../src/index"),
     pathgen: await import("../src/pathgen"),
     auth: await import("../src/auth"),

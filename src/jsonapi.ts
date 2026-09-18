@@ -84,8 +84,12 @@ function typeCode(t: unknown): number | undefined {
   return undefined;
 }
 
-/** Render RDATA the way the JSON DNS API does (dns.google / 1.1.1.1). */
-function renderRdata(type: string | number | undefined, data: unknown): string {
+/**
+ * Render RDATA the way the JSON DNS API does (dns.google / 1.1.1.1).
+ * Exported for the admin "DNS resolve test" panel, which renders records
+ * from a validated upstream packet and must format them identically.
+ */
+export function renderRdata(type: string | number | undefined, data: unknown): string {
   const t = String(type);
   const d = data as Record<string, unknown> | unknown[] | string;
   switch (t) {

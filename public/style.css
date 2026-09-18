@@ -213,3 +213,20 @@ td code { font-size: 12px; color: var(--muted); word-break: break-all; }
 .quota-fill.warn { background: #d29922; }
 .quota-fill.danger { background: #f85149; }
 .quota-num { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+/* DNS 解析测试 */
+.resolve-block {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  margin-top: 14px;
+}
+.resolve-block:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+.resolve-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+/* 记录数据是这一屏的主体,别继承 td code 的弱化灰色 */
+.resolve-data { color: var(--text); word-break: break-all; }

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content="noindex, nofollow" />
   <title>DoH Proxy · 控制台</title>
-  <link rel="stylesheet" href="./style.css?v=20260913" />
+  <link rel="stylesheet" href="./style.css?v=20260919" />
 </head>
 <body>
   <!-- 登录层 -->
@@ -26,6 +26,7 @@
       <nav class="tabs" id="tabs">
         <button data-tab="dashboard" class="tab active">Dashboard</button>
         <button data-tab="upstreams" class="tab">Upstreams</button>
+        <button data-tab="resolve" class="tab">DNS 解析测试</button>
         <button data-tab="cache" class="tab">Cache &amp; Routing</button>
         <button data-tab="ecs" class="tab">ECS</button>
         <button data-tab="path" class="tab">自定义路径</button>
@@ -97,6 +98,41 @@
             </div>
           </form>
           <p id="upstream-msg" class="error hidden"></p>
+        </div>
+      </section>
+
+      <!-- DNS 解析测试 -->
+      <section id="tab-resolve" class="panel hidden">
+        <div class="card">
+          <h2>DNS 解析测试 <span class="muted small-note">(自选域名 + 自选上游,查看 A / AAAA 记录)</span></h2>
+          <form id="resolve-form" class="form-grid">
+            <label>域名
+              <input name="name" required placeholder="example.com" autocomplete="off" spellcheck="false" />
+            </label>
+            <label>DoH 服务商
+              <select name="provider" id="resolve-provider"></select>
+            </label>
+            <label>记录类型
+              <select name="types">
+                <option value="both">A + AAAA(两者,默认)</option>
+                <option value="A">仅 A(IPv4)</option>
+                <option value="AAAA">仅 AAAA(IPv6)</option>
+              </select>
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="btn primary" id="resolve-submit">查询</button>
+            </div>
+          </form>
+          <p class="muted small-note">
+            直连所选上游查询,<strong>绕过本机缓存与路由</strong>,所以结果可归因到该服务商;
+            不写缓存、不计入上游评分。仅支持 A / AAAA。
+          </p>
+          <p id="resolve-msg" class="error hidden"></p>
+        </div>
+
+        <div class="card hidden" id="resolve-result-card">
+          <h2 id="resolve-result-title">查询结果</h2>
+          <div id="resolve-results"></div>
         </div>
       </section>
 
@@ -175,6 +211,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="./app.js?v=20260913"></script>
+  <script src="./app.js?v=20260919"></script>
 </body>
 </html>

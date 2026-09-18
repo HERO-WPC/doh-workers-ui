@@ -153,6 +153,7 @@
 
     renderCacheForm(currentConfig);
     renderEcsForm(currentConfig);
+    renderResolveForm(currentConfig);
     el("path-box").textContent = currentConfig.doh.path;
   }
 
@@ -349,6 +350,97 @@
     const e = el(id);
     e.textContent = msg;
     e.classList.remove("hidden");
+  }
+
+  // ------------------------------------------------------------------
+  // DNS 解析测试(自选域名 + 自选上游,查看 A / AAAA 记录)
+  // ------------------------------------------------------------------
+  // 后端直连所选上游,绕过缓存与路由,所以结果可归因到该服务商。
+  function renderResolveForm(cfg) {
+    const form = el("resolve-form");
+    // 旧 index.html 被缓存 + 新 app.js 先到时会没有这个节点:静默跳过,
+    // 绝不让一个新面板的缺失去连累整个控制台渲染。
+    if (!form) return;
+    const sel = form.provider;
+    const prev = sel.value;
+    sel.innerHTML = cfg.upstreams
+      .map((u) => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.name)}${u.enabled ? "" : "(已停用)"}</option>`)
+      .join("");
+    // 配置刷新 / 切页时保持用户已选的服务商。
+    if (prev && cfg.upstreams.some((u) => u.id === prev)) sel.value = prev;
+  }
+
+  const resolveForm = el("resolve-form");
+  if (resolveForm) {
+    resolveForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const f = e.target;
+      const btn = el("resolve-submit");
+      const typeSel = f.types.value;
+      el("resolve-msg").classList.add("hidden");
+      btn.disabled = true;
+      btn.textContent = "查询中…";
+      try {
+        const r = await send("/resolve-test", "POST", {
+          name: f.name.value.trim(),
+          provider: f.provider.value,
+          ...(typeSel === "both" ? {} : { types: typeSel }),
+        });
+        renderResolveResult(r);
+      } catch (err) {
+        el("resolve-result-card").classList.add("hidden");
+        showFormError("resolve-msg", err.message);
+      }
+      btn.disabled = false;
+      btn.textContent = "查询";
+    });
+  }
+
+  function renderResolveResult(r) {
+    el("resolve-result-card").classList.remove("hidden");
+    el("resolve-result-title").innerHTML =
+      `查询结果 <span class="muted small-note">${escapeHtml(r.name)} · ${escapeHtml(r.provider.name)} · <code>${escapeHtml(r.provider.url)}</code></span>`;
+    el("resolve-results").innerHTML = r.results.map(resolveBlock).join("");
+  }
+
+  function resolveStatusBadge(res) {
+    if (res.status === 0) return '<span class="badge green">NOERROR</span>';
+    if (res.status === 3) return '<span class="badge yellow">NXDOMAIN</span>';
+    return `<span class="badge red">${escapeHtml(res.statusText || "RCODE_" + res.status)}</span>`;
+  }
+
+  function resolveBlock(res) {
+    const head = `<div class="resolve-head"><span class="badge gray">${escapeHtml(res.type)}</span>${resolveStatusBadge(res)}</div>`;
+
+    if (!res.ok) {
+      const why = res.timedOut ? "超时" : res.error || "查询失败";
+      return `<div class="resolve-block">${head}<p class="error">查询失败:${escapeHtml(why)}</p></div>`;
+    }
+
+    const note = res.note === "NODATA" ? '<span class="badge yellow">NODATA · 查询成功但无该类型记录</span>' : "";
+    const records = res.records || [];
+    if (records.length === 0) {
+      const auth = (res.authority || []).map((a) => `${a.type} ${a.data}`).join(" · ");
+      const extra = auth ? `<p class="muted small-note">权威段:${escapeHtml(auth)}</p>` : '<p class="muted small-note">无记录</p>';
+      return `<div class="resolve-block">${head}${note}${extra}</div>`;
+    }
+
+    const rows = records
+      .map(
+        (rec) => `<tr>
+          <td><code>${escapeHtml(rec.name)}</code></td>
+          <td><span class="badge gray">${escapeHtml(rec.type)}</span></td>
+          <td>${rec.ttl == null ? "—" : rec.ttl}</td>
+          <td><code class="resolve-data">${escapeHtml(rec.data)}</code></td>
+        </tr>`,
+      )
+      .join("");
+    return `<div class="resolve-block">${head}${note}
+      <div class="table-wrap"><table>
+        <thead><tr><th>名称</th><th>类型</th><th>TTL</th><th>数据</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
   }
 
   // ------------------------------------------------------------------
