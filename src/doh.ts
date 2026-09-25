@@ -135,7 +135,7 @@ async function extractDohInput(request: Request, cfg: Config): Promise<{ ok: tru
 // ECS policy
 // ---------------------------------------------------------------------------
 
-export function decideEcs(cfg: Config, q: ParsedClientQuery, clientIp: string | null): EcsSpec | null {
+export function decideEcs(cfg: Config, q: Pick<ParsedClientQuery, "clientEcs">, clientIp: string | null): EcsSpec | null {
   switch (cfg.ecs.mode) {
     case "off":
       return null;

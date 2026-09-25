@@ -294,6 +294,9 @@ export function makeEnv(opts: Partial<TestEnv> = {}): TestEnv {
         if (path === "/" || path === "/index.html") {
           return new Response("<html>webui</html>", { status: 200, headers: { "content-type": "text/html" } });
         }
+        if (path === "/login.html") {
+          return new Response("<html>login</html>", { status: 200, headers: { "content-type": "text/html" } });
+        }
         return new Response("not found", { status: 404 });
       },
     },

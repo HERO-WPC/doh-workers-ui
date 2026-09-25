@@ -69,12 +69,38 @@ describe("routing & health", () => {
     expect(json.status).toBe("ok");
   });
 
-  it("serves WebUI assets at /, the SPA entry at /admin, and 404s unknown non-DoH paths", async () => {
+  it("serves ONLY the login page to unauthenticated visitors (no console DOM), and 404s unknown non-DoH paths", async () => {
     const env = setup();
-    expect((await handle(new Request("https://worker.test/"), env)).status).toBe(200);
-    const admin = await handle(new Request("https://worker.test/admin"), env);
-    expect(admin.status).toBe(200);
-    expect(admin.headers.get("content-type")).toContain("text/html");
+    // Unauthenticated / -> thin login page, NOT the console.
+    const unauth = await handle(new Request("https://worker.test/"), env);
+    expect(unauth.status).toBe(200);
+    const unauthBody = await unauth.text();
+    expect(unauthBody).toContain("login");
+    expect(unauthBody).not.toContain("webui");
+    // Auth-dependent entry documents must never be cached (a stale login page
+    // would otherwise survive a successful login under the same URL).
+    expect(unauth.headers.get("cache-control")).toBe("no-store");
+
+    // Every console entry path is gated the same way.
+    for (const p of ["/index.html", "/admin", "/admin/"]) {
+      const r = await handle(new Request("https://worker.test" + p), env);
+      expect(r.status).toBe(200);
+      expect(await r.text()).toContain("login");
+    }
+
+    // A valid session cookie unlocks the real console.
+    const cookie = "doh_admin_session=" + encodeURIComponent("test-admin-secret");
+    const authed = await handle(new Request("https://worker.test/", { headers: { cookie } }), env);
+    expect(authed.status).toBe(200);
+    expect(await authed.text()).toContain("webui");
+    expect(authed.headers.get("cache-control")).toBe("no-store");
+    const authedAdmin = await handle(new Request("https://worker.test/admin", { headers: { cookie } }), env);
+    expect(await authedAdmin.text()).toContain("webui");
+
+    // An invalid session cookie is treated as unauthenticated.
+    const badCookie = await handle(new Request("https://worker.test/", { headers: { cookie: "doh_admin_session=wrong" } }), env);
+    expect(await badCookie.text()).toContain("login");
+
     expect((await handle(new Request("https://worker.test/some/unknown"), env)).status).toBe(404);
   });
 

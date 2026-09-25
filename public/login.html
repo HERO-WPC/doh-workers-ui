@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>DoH Proxy · 登录</title>
+  <link rel="stylesheet" href="./style.css?v=20260920" />
+</head>
+<body>
+  <!-- 纯登录页:不含任何控制台 DOM。
+       服务端仅在请求带有有效会话 cookie 时才下发真正的控制台(index.html);
+       否则(例如一个未认证的 curl 请求 / )只返回本页。 -->
+  <div class="login-wrap">
+    <form id="login-form" class="login-card">
+      <h1>DoH Proxy 控制台</h1>
+      <p class="muted">输入 ADMIN_SECRET 登录管理后台</p>
+      <input id="login-secret" type="password" placeholder="ADMIN_SECRET" autocomplete="current-password" required />
+      <button type="submit" class="btn primary">登录</button>
+      <p id="login-error" class="error hidden"></p>
+    </form>
+  </div>
+  <script src="./login.js?v=20260920"></script>
+</body>
+</html>

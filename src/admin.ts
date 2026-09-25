@@ -5,7 +5,13 @@
 // here. No CORS headers are ever emitted from this module — it is
 // same-origin by design, unlike the DoH endpoint.
 
-import { isAdminAuthorized } from "./auth";
+import {
+  clearSessionCookie,
+  isAdminAuthorized,
+  isAdminCookieAuthorized,
+  requestIsHttps,
+  sessionCookieValue,
+} from "./auth";
 import { dnsCache } from "./cache";
 import {
   CONFIG_KV_KEY,
@@ -16,7 +22,7 @@ import {
   validateUpstreamInput,
   validateUpstreamUrl,
 } from "./config";
-import { testUpstreamUrl } from "./doh";
+import { decideEcs, testUpstreamUrl } from "./doh";
 import { bareContentType, jsonResponse, methodNotAllowed, textResponse, WORKER_VERSION } from "./httputil";
 import { ensureStatsClock, getMetricsStore, isolateStats, reliabilityOf, scoreOf, statsSnapshot, uptimeSeconds } from "./metrics";
 import { generatePathToken, buildPath } from "./pathgen";
@@ -25,10 +31,43 @@ import { fetchAccountUsage } from "./usage";
 import type { Config, Env, WorkerCtx } from "./types";
 
 export async function handleAdminApi(request: Request, env: Env, ctx: WorkerCtx): Promise<Response> {
-  if (!(await isAdminAuthorized(request, env.ADMIN_SECRET))) {
+  // Accept a bearer token OR a valid session cookie. The cookie is how the
+  // server decides whether page loads get the console (see src/index.ts); it
+  // is established by any request that authenticates with a bearer token.
+  const [bearerOk, cookieOk] = await Promise.all([
+    isAdminAuthorized(request, env.ADMIN_SECRET),
+    isAdminCookieAuthorized(request, env.ADMIN_SECRET),
+  ]);
+  if (!bearerOk && !cookieOk) {
     return jsonResponse({ error: "unauthorized" }, 401, { "www-authenticate": 'Bearer realm="admin"' });
   }
 
+  // Logout: clear the session cookie so the next page load gets the login page.
+  // Auth is required above so a cross-site request can't clear someone's session.
+  const url = new URL(request.url);
+  const route = url.pathname.slice("/admin/api".length) || "/";
+  const secure = requestIsHttps(request);
+  if (route === "/logout") {
+    if (request.method !== "POST") return methodNotAllowed("POST");
+    return jsonResponse({ ok: true }, 200, { "set-cookie": clearSessionCookie(secure) });
+  }
+
+  const res = await handleAdminApiAuthorized(request, env, ctx);
+  // A fresh bearer login (no valid cookie yet) establishes the session.
+  // Skip it when the request already authenticated via the cookie, so the
+  // cookie is not re-sent (and its expiry not refreshed) on every poll.
+  if (bearerOk && !cookieOk) return withSessionCookie(res, env.ADMIN_SECRET, secure);
+  return res;
+}
+
+/** Append the session Set-Cookie header to an existing response. */
+function withSessionCookie(res: Response, secret: string, secure: boolean): Response {
+  const headers = new Headers(res.headers);
+  headers.set("set-cookie", sessionCookieValue(secret, secure));
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
+async function handleAdminApiAuthorized(request: Request, env: Env, ctx: WorkerCtx): Promise<Response> {
   const url = new URL(request.url);
   const route = url.pathname.slice("/admin/api".length) || "/";
   const method = request.method;
@@ -145,7 +184,11 @@ export async function handleAdminApi(request: Request, env: Env, ctx: WorkerCtx)
     if (!parsed.ok) return jsonResponse({ error: parsed.error }, 400);
     // 直连所选上游,刻意绕过本机缓存与路由:结果必须可归因到该服务商。
     // 不写缓存、不记 metrics,所以跑测试不影响评分与 KV 写额度。
-    return jsonResponse(await runResolveTest(parsed.input));
+    // ECS 按当前配置(off/auto/fixed)由 decideEcs 决定,与线上查询保持一致。
+    // 测试面板请求本身不带客户端 ECS,所以 clientEcs 传 null。
+    const clientIp = request.headers.get("cf-connecting-ip");
+    const ecs = decideEcs(cfg, { clientEcs: null }, clientIp);
+    return jsonResponse(await runResolveTest(parsed.input, { ecs }));
   }
 
   // ---- regenerate path ----

@@ -51,6 +51,64 @@ describe("authentication", () => {
   });
 });
 
+describe("admin session cookie", () => {
+  const SESSION = "doh_admin_session=" + encodeURIComponent("test-admin-secret");
+
+  it("sets an httpOnly session cookie on a fresh bearer login", async () => {
+    const { res } = await call("/health");
+    expect(res.status).toBe(200);
+    const setCookie = res.headers.get("set-cookie");
+    expect(setCookie).toContain("doh_admin_session=");
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("Secure");
+    expect(setCookie).toContain("SameSite=Strict");
+  });
+
+  it("does not re-set the cookie when a valid session cookie is already present", async () => {
+    const e = makeEnv() as unknown as Env;
+    const { res } = await call("/config", "GET", undefined, { headers: { cookie: SESSION }, env: e });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("accepts a valid session cookie without any bearer token", async () => {
+    const e = makeEnv() as unknown as Env;
+    const { res } = await call("/config", "GET", undefined, { headers: { cookie: SESSION }, env: e });
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects a wrong / malformed session cookie with 401", async () => {
+    const e = makeEnv() as unknown as Env;
+    for (const cookie of ["doh_admin_session=wrong", "doh_admin_session=", "other=1"]) {
+      const { res } = await call("/config", "GET", undefined, { headers: { cookie }, env: e });
+      expect(res.status).toBe(401);
+    }
+  });
+
+  it("omits the Secure flag over plain http (local dev)", async () => {
+    const e = makeEnv() as unknown as Env;
+    const req = new Request("http://worker.test/admin/api/health", { headers: adminHeaders() });
+    const res = await m.admin.handleAdminApi(req, e, new FakeCtx());
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie")).toContain("doh_admin_session=");
+    expect(res.headers.get("set-cookie") || "").not.toContain("Secure");
+  });
+
+  it("clears the session cookie on logout", async () => {
+    const { res } = await call("/logout", "POST", {});
+    expect(res.status).toBe(200);
+    const setCookie = res.headers.get("set-cookie") || "";
+    expect(setCookie).toContain("doh_admin_session=;");
+    expect(setCookie).toContain("Max-Age=0");
+  });
+
+  it("logout requires auth (401 without a credential)", async () => {
+    const e = makeEnv() as unknown as Env;
+    const { res } = await call("/logout", "POST", {}, { headers: {}, env: e });
+    expect(res.status).toBe(401);
+  });
+});
+
 describe("config endpoints", () => {
   it("GET /config returns config + dohUrl", async () => {
     const { json } = await call("/config");

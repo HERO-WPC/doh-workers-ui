@@ -19,7 +19,11 @@
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "not_found_handling": "none"
+    "not_found_handling": "none",
+    // 必须让 Worker 先于资源层执行:控制台入口(/、/index.html、/admin)
+    // 需要服务端会话门控;否则 assets-first 模式下 / 会直接把 index.html
+    // 发给所有未认证请求,门控形同虚设。
+    "run_worker_first": true
   },
 
   // KV stores ONLY config + provider metrics. DNS responses live in the

@@ -198,6 +198,51 @@ describe("queryOneType", () => {
     expect(slow.ok).toBe(false);
     expect(slow.timedOut).toBe(true);
   });
+
+  it("检查是否把 opts.ecs 注入到上游查询报文(code=8 CLIENT_SUBNET)", async () => {
+    // 记录发往上游的报文,校验 OPT 里带了 ECS
+    let sentWire: Buffer | null = null;
+    const captureFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = Buffer.from((init?.body as Uint8Array) ?? new Uint8Array(0));
+      sentWire = body;
+      return new Response(buildUpstreamResponseBody(body, { kind: "answer" }), {
+        status: 200,
+        headers: { "content-type": DOH_CONTENT_TYPE },
+      });
+    }) as unknown as typeof globalThis.fetch;
+
+    const ecs = { family: 1 as const, sourcePrefix: 24, address: "223.66.196.0" };
+    const r = await m.resolvetest.queryOneType(up(), "example.com", "A", { fetchImpl: captureFetch, ecs });
+    expect(r.ok).toBe(true);
+
+    const dec = packet.decode(sentWire!) as packet.Packet & { additionals?: unknown[] };
+    const opt = (dec.additionals ?? []).find((a) => String((a as { type?: string | number }).type) === "OPT") as
+      | { options?: { code?: number; family?: number; sourcePrefixLength?: number; ip?: string }[] }
+      | undefined;
+    expect(opt).toBeTruthy();
+    const ecsOpt = (opt!.options ?? []).find((o) => o.code === 8);
+    expect(ecsOpt).toMatchObject({ code: 8, family: 1, sourcePrefixLength: 24 });
+  });
+
+  it("未传 ecs 时上游查询不含 CLIENT_SUBNET", async () => {
+    let sentWire: Buffer | null = null;
+    const captureFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = Buffer.from((init?.body as Uint8Array) ?? new Uint8Array(0));
+      sentWire = body;
+      return new Response(buildUpstreamResponseBody(body, { kind: "answer" }), {
+        status: 200,
+        headers: { "content-type": DOH_CONTENT_TYPE },
+      });
+    }) as unknown as typeof globalThis.fetch;
+
+    await m.resolvetest.queryOneType(up(), "example.com", "A", { fetchImpl: captureFetch });
+    const dec = packet.decode(sentWire!) as packet.Packet & { additionals?: unknown[] };
+    const opt = (dec.additionals ?? []).find((a) => String((a as { type?: string | number }).type) === "OPT") as
+      | { options?: { code?: number }[] }
+      | undefined;
+    // 未传 ecs 且 do=false 时,甚至不会附加 OPT;即便有 OPT 也不允许出现 code=8
+    expect((opt?.options ?? []).some((o) => o.code === 8)).toBe(false);
+  });
 });
 
 describe("runResolveTest", () => {
@@ -216,6 +261,19 @@ describe("runResolveTest", () => {
     });
     expect(r.results.map((x) => x.type)).toEqual(["A", "AAAA"]);
     expect(seen.sort()).toEqual(["A", "AAAA"]);
+    // 未传 ecs 时,结果里 ecs 为 null(off)
+    expect(r.ecs).toBeNull();
+  });
+
+  it("把 opts.ecs 透传给每个类型查询,并在结果里回显", async () => {
+    const seen: string[] = [];
+    const ecs = { family: 1 as const, sourcePrefix: 24, address: "223.66.196.0" };
+    const r = await m.resolvetest.runResolveTest(
+      { name: "example.com", upstream: up(), types: ["A", "AAAA"] },
+      { fetchImpl: typeAwareFetch({}, seen), ecs },
+    );
+    expect(r.ecs).toEqual(ecs);
+    expect(r.results).toHaveLength(2);
   });
 
   it("一个类型失败不影响另一个类型", async () => {

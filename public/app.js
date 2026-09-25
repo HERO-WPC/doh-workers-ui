@@ -13,7 +13,10 @@
   }
 
   async function request(path, options = {}) {
-    const headers = { authorization: "Bearer " + token(), ...(options.headers || {}) };
+    // 无 token 时不发送空 Bearer,让服务端纯粹依据 HttpOnly 会话 cookie 判定
+    // (新标签页等场景)。有 token 时照常走 Bearer。
+    const t = token();
+    const headers = { ...(t ? { authorization: "Bearer " + t } : {}), ...(options.headers || {}) };
     if (options.body !== undefined) headers["content-type"] = "application/json";
     const res = await fetch(api(path), { ...options, headers });
     if (res.status === 401) {
@@ -398,8 +401,11 @@
 
   function renderResolveResult(r) {
     el("resolve-result-card").classList.remove("hidden");
+    const ecsNote = r.ecs
+      ? ` · ECS <code>${escapeHtml(String(r.ecs.family) + "/" + r.ecs.sourcePrefix + ":" + r.ecs.address)}</code>`
+      : " · ECS off";
     el("resolve-result-title").innerHTML =
-      `查询结果 <span class="muted small-note">${escapeHtml(r.name)} · ${escapeHtml(r.provider.name)} · <code>${escapeHtml(r.provider.url)}</code></span>`;
+      `查询结果 <span class="muted small-note">${escapeHtml(r.name)} · ${escapeHtml(r.provider.name)} · <code>${escapeHtml(r.provider.url)}</code>${ecsNote}</span>`;
     el("resolve-results").innerHTML = r.results.map(resolveBlock).join("");
   }
 
@@ -550,19 +556,28 @@
     }
   });
 
-  el("logout-btn").addEventListener("click", () => showLogin());
+  el("logout-btn").addEventListener("click", async () => {
+    // 先让服务端清除会话 cookie(否则下次页面请求仍命中控制台),
+    // 再丢弃本页凭据并回到登录页 —— 实现真正的物理隔离。
+    try {
+      await send("/logout", "POST", {});
+    } catch {
+      // token 可能已失效;即使清 cookie 失败,回到登录页仍会因无 cookie 而只显示登录页
+    }
+    sessionStorage.removeItem(TOKEN_KEY);
+    location.href = "/";
+  });
 
   function refreshAll() {
     refreshDashboard().catch((e) => console.error(e));
     refreshUpstreams().catch((e) => console.error(e));
   }
 
-  // Auto-login when a token is already present.
-  if (token()) {
-    get("/health")
-      .then(showApp)
-      .catch(() => showLogin());
-  } else {
-    showLogin();
-  }
+  // Auto-login. Two paths, one probe:
+  //   - a Bearer token in this tab (sessionStorage), or
+  //   - a valid HttpOnly session cookie (new tab / already logged in),
+  // both authenticate & establish/refresh the session. On failure show login.
+  get("/health")
+    .then(showApp)
+    .catch(() => showLogin());
 })();

@@ -11,6 +11,7 @@
 // 任何 KV 写入(每次调用只消耗 1-2 个上游请求)。
 
 import { buildUpstreamQuery, type DnsRecord } from "./dnsmsg";
+import type { EcsSpec } from "./ecs";
 import { normalizeQType, renderRdata, validateQueryName } from "./jsonapi";
 import { queryUpstream, type FetchLike } from "./upstream";
 import type { Config, Upstream } from "./types";
@@ -51,6 +52,8 @@ export interface ResolveTypeResult {
 export interface ResolveTestResult {
   name: string;
   provider: { id: string; name: string; url: string; enabled: boolean };
+  /** 本次测试实际注入的 ECS(如 "1/24:223.66.196.0"),off 时为 null。 */
+  ecs: EcsSpec | null;
   results: ResolveTypeResult[];
 }
 
@@ -151,16 +154,19 @@ function rrList(records: DnsRecord[] | undefined): ResolveRecord[] {
 /**
  * 直连所选上游查询单个类型。任何失败都收敛成 ok=false 的结果(不抛),
  * 所以一个类型失败不会连累另一个类型。
+ *
+ * ecs 决定上游查询里是否注入 EDNS Client Subnet:由调用方(admin)按当前
+ * 配置的 ecs.mode 用 decideEcs 算出来。这样解析测试与线上查询/当前 ECS
+ * 设置保持一致 —— 用户改完 ECS 面板后,测试看到的正是该网段视角的答案。
  */
 export async function queryOneType(
   upstream: Upstream,
   name: string,
   type: ResolveTestType,
-  opts: { fetchImpl?: FetchLike } = {},
+  opts: { fetchImpl?: FetchLike; ecs?: EcsSpec | null } = {},
 ): Promise<ResolveTypeResult> {
-  // 随机 TXID + RD=1,不带 EDNS:与线上查询同构,但不注入 ECS —— 面板要展示的是
-  // 该服务商对"当前位置的解析器出口"的视图,不是被我们改写过的视图。
-  const wire = buildUpstreamQuery({ qname: name, qtype: type, qclass: "IN", cd: false, do: false }, null);
+  // 随机 TXID + RD=1,不带 EDNS DO;是否带 ECS 由 opts.ecs 决定。
+  const wire = buildUpstreamQuery({ qname: name, qtype: type, qclass: "IN", cd: false, do: false }, opts.ecs ?? null);
 
   const attempt = await queryUpstream(
     upstream,
@@ -196,8 +202,12 @@ export async function queryOneType(
 }
 
 /** 跑一次解析测试:并行为每个类型直连所选上游查询一次。 */
-export async function runResolveTest(input: ResolveTestInput, opts: { fetchImpl?: FetchLike } = {}): Promise<ResolveTestResult> {
-  const results = await Promise.all(input.types.map((t) => queryOneType(input.upstream, input.name, t, opts)));
+export async function runResolveTest(
+  input: ResolveTestInput,
+  opts: { fetchImpl?: FetchLike; ecs?: EcsSpec | null } = {},
+): Promise<ResolveTestResult> {
+  const ecs = opts.ecs ?? null;
+  const results = await Promise.all(input.types.map((t) => queryOneType(input.upstream, input.name, t, { fetchImpl: opts.fetchImpl, ecs })));
   return {
     name: input.name,
     provider: {
@@ -206,6 +216,7 @@ export async function runResolveTest(input: ResolveTestInput, opts: { fetchImpl?
       url: input.upstream.url,
       enabled: input.upstream.enabled,
     },
+    ecs,
     results,
   };
 }

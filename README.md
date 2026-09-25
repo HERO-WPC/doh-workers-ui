@@ -75,8 +75,10 @@
 Client ──HTTPS──▶ Worker 路由
                    ├── GET  /health              公开健康检查
                    ├── /<custom-path>/dns-query  DoH 管道(GET/POST 同管线)
-                   ├── /admin/api/*              Admin API(Bearer 鉴权)
-                   └── 其余                      Static Assets(WebUI)
+                   ├── /admin/api/*              Admin API(Bearer / 会话 cookie 鉴权)
+                   ├── /、/index.html、/admin    控制台入口(需会话 cookie)
+                   │      └─ 未认证 → 纯登录页 login.html
+                   └── 其余                      Static Assets(登录页/样式/脚本)
 DoH 管道: parse → normalize → ECS 策略 → SHA-256 cache key
         → L1(isolate LRU) → L2(Cache API) → single-flight
         → 上游路由 → 响应校验 → TTL 钳制+jitter → 缓存写(waitUntil) → 响应
@@ -182,7 +184,7 @@ Workers Static Assets 提供,无需第二台服务器。登录后五个页面:
 | ECS | 模式(off/auto/fixed)、IPv4/IPv6 前缀、固定网段 |
 | 自定义路径 | 当前路径 + 完整 DoH URL、复制、手工修改、一键重生成 |
 
-登录态保存在 sessionStorage,关标签即失效;Admin API 无任何 CORS 头,仅同源可用。
+登录态与访问控制:**控制台 HTML 在服务端就做了物理隔离**。只有带有效会话 cookie(HTTP-only `doh_admin_session`,登录成功后由 Admin API 下发)的请求才会拿到真正的控制台 `index.html`;未认证的 `curl /` 只得到一页极简登录页,绝不泄漏任何控制台 DOM。登录后凭据同时写入 sessionStorage(关标签即失效,用于 API 调用),退出会先清会话 cookie 再跳回登录页。Admin API 无任何 CORS 头,仅同源可用。
 
 ## KV
 
@@ -265,7 +267,8 @@ ECS 永远参与 cache key,绝不出现"带 ECS 的答案被无 ECS 请求命中
 
 ## 安全
 
-- **DoH 面 / Admin 面完全分离**:知道 DoH 路径拿不到任何管理能力;Admin API 每个端点都要求 `Authorization: Bearer $ADMIN_SECRET`,常数时间比较(SHA-256 后逐字节异或);
+- **DoH 面 / Admin 面完全分离**:知道 DoH 路径拿不到任何管理能力;Admin API 每个端点都要求 `Authorization: Bearer $ADMIN_SECRET` 或有效会话 cookie,常数时间比较(SHA-256 后逐字节异或);
+- **控制台物理隔离**:未认证请求对 `/`、`/index.html`、`/admin` 只返回纯登录页(服务端判定,非前端 JS 视觉切换),控制台 DOM 不流出;登录成功下发 `HttpOnly; SameSite=Strict`(https 下加 `Secure`)会话 cookie,30 天有效,退出即清除;
 - Admin API 不返回 CORS 头(仅同源 WebUI);DoH 端点才有 `Access-Control-Allow-Origin: *`;
 - 上游 URL 强制 HTTPS、禁凭据、禁 `file:`/`ftp:`/`data:` 等 scheme;
 - 报文防护:空包/过短(<12B)/超长(>65535B)/坏指针/超深压缩指针/截断 question 全部拒绝(dns-packet 抛错即 400),POST body 超限 413,Content-Type 错 415,方法错 405;
@@ -323,7 +326,7 @@ GET    /admin/api/config            PUT    /admin/api/config
 GET    /admin/api/upstreams         POST   /admin/api/upstreams
 PUT    /admin/api/upstreams/:id     DELETE /admin/api/upstreams/:id
 POST   /admin/api/test-upstream     POST   /admin/api/regenerate-path
-GET    /admin/api/stats             GET    /admin/api/health
+POST   /admin/api/logout            GET    /admin/api/stats             GET    /admin/api/health
 GET    /health (公开,仅存活信息)
 ```
 

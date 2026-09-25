@@ -4,16 +4,22 @@
 //   1. /health            — public liveness (no config, no KV)
 //   2. /admin/api/*       — authenticated management API
 //   3. /<custom-path>     — the DoH endpoint (config-driven)
-//   4. everything else    — Workers Static Assets (WebUI SPA)
+//   4. console entry      — /, /index.html, /admin: serve the console only to
+//                           a valid session cookie, otherwise a thin login page
+//   5. everything else    — Workers Static Assets (public login/code assets)
 //
 // The DoH path and the admin surface are fully separated: knowing the DoH
 // path grants no administrative power, and admin auth never touches DoH.
 
 import { handleAdminApi } from "./admin";
+import { isAdminCookieAuthorized } from "./auth";
 import { handleDohRequest } from "./doh";
 import { getConfig } from "./config";
 import { jsonResponse, methodNotAllowed, textResponse, WORKER_VERSION } from "./httputil";
 import type { Env } from "./types";
+
+/** Paths that serve the console (or, when unauthenticated, the login page). */
+const CONSOLE_ENTRY_PATHS = new Set(["/", "/index.html", "/admin", "/admin/"]);
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -40,13 +46,32 @@ export default {
 
       // WebUI static assets. Unknown paths must produce real 404s — the
       // custom DoH path must be indistinguishable from any junk path.
-      // /admin is the SPA entry point and falls back to index.html.
+      //
+      // Console entry paths (/, /index.html, /admin, /admin/) are gated
+      // server-side: only a valid session cookie gets the real console HTML,
+      // everyone else gets a thin login page. This is physical isolation,
+      // not a JS visual trick — an unauthenticated curl sees no console DOM.
+      //
+      // These entry documents vary by auth state, so they must not be cached:
+      // the login page at "/" and the console at "/" share a URL and differ
+      // only by cookie. Force no-store and strip conditional headers so the
+      // browser never serves a stale login page after a successful login.
       if (request.method === "GET" || request.method === "HEAD") {
-        const asset = await env.ASSETS.fetch(request);
-        if (asset.status !== 404) return asset;
-        if (path === "/admin" || path === "/admin/") {
-          return env.ASSETS.fetch(new Request(new URL("/index.html", url), { method: "GET" }));
+        if (CONSOLE_ENTRY_PATHS.has(path)) {
+          const authorized = await isAdminCookieAuthorized(request, env.ADMIN_SECRET);
+          const entry = authorized ? "/index.html" : "/login.html";
+          const target = new Request(new URL(entry, url), {
+            method: request.method,
+            headers: Object.fromEntries(
+              [...request.headers.entries()].filter(([k]) => k !== "if-none-match" && k !== "if-modified-since"),
+            ),
+          });
+          const asset = await env.ASSETS.fetch(target);
+          const headers = new Headers(asset.headers);
+          headers.set("cache-control", "no-store");
+          return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers });
         }
+        const asset = await env.ASSETS.fetch(request);
         return asset;
       }
 

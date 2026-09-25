@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 const appJs = readFileSync(join(__dirname, "..", "public", "app.js"), "utf8");
 const indexHtml = readFileSync(join(__dirname, "..", "public", "index.html"), "utf8");
+const loginHtml = readFileSync(join(__dirname, "..", "public", "login.html"), "utf8");
 
 const HELPERS = ["fmtDuration", "escapeHtml", "bytesHuman", "statCard", "quotaBar", "badgeFor", "el", "renderResolveForm", "renderResolveResult", "resolveBlock", "resolveStatusBadge"];
 
@@ -43,6 +44,23 @@ describe("public/app.js helper definitions", () => {
       'id="resolve-result-card"',
     ]) {
       expect(indexHtml).toContain(marker);
+    }
+  });
+
+  // 方案 B(物理隔离)在 HTML 层面的守卫:login.html 是发给未认证请求的
+  // 唯一页面,它必须真的只含登录表单,绝不能泄漏任何控制台 DOM。
+  it("login.html 是纯登录页,不包含任何控制台 DOM", () => {
+    for (const marker of [
+      "login-form", "login-secret", "login.js",
+    ]) {
+      expect(loginHtml).toContain(marker);
+    }
+    // 控制台专属节点若出现在登录页,说明物理隔离被破坏
+    for (const forbidden of [
+      'id="app-view"', 'id="tabs"', "topbar", "tab-dashboard",
+      'id="resolve-form"', 'id="ecs-form"', 'id="path-form"',
+    ]) {
+      expect(loginHtml).not.toContain(forbidden);
     }
   });
 });
