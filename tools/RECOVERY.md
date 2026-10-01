@@ -138,3 +138,14 @@ cmd /c "tools\monitor-start.bat"
 - 看门狗：计划任务 `doh-monitor-watchdog` 每 5 分钟检查一次；`tools\monitor-watchdog.ps1`
   - 维护时想故意停 monitor：建 `tools\.watchdog-pause`（删掉即恢复）
   - 日志：`tools\monitor-watchdog.log`
+  - **不弹窗**：任务是 `wscript.exe //B tools\monitor-watchdog-hidden.vbs`，由 VBS 以
+    窗口样式 0 拉起 powershell。原先任务直接跑 `powershell.exe -File ...`，而任务
+    是 InteractiveToken（用户会话内），于是每 5 分钟闪一个控制台窗口。
+    改任务动作的方法（导出的 XML 是 UTF-8，写回用 UTF-16）：
+
+    ```powershell
+    cmd /c "schtasks /query /tn doh-monitor-watchdog /xml > $env:TEMP\wd.xml"
+    # 把 <Command> 改成 wscript.exe，<Arguments> 改成 //B "…\monitor-watchdog-hidden.vbs"
+    schtasks /create /tn doh-monitor-watchdog /xml $env:TEMP\wd-new.xml /f
+    ```
+  - 缺 `tools/.monitor.env` 时看门狗会记一行原因并**拒绝拉起**（避免每 5 分钟空转失败）。
