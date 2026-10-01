@@ -60,6 +60,13 @@ function Test-Health {
 
 function Start-Monitor([string]$why) {
     if (-not (Test-Path $batPath)) { Write-Log "!! 找不到 $batPath, 无法拉起"; return }
+    # 私有配置缺失时 monitor.py 会故意拒绝启动(占位符 = 会写错 DNS)。这里先拦一道,
+    # 否则看门狗每 5 分钟拉起一次、进程立刻退出, 只会刷日志。
+    $envPath = Join-Path $root '.monitor.env'
+    if (-not (Test-Path $envPath)) {
+        Write-Log ("!! 缺少 {0} (私有部署标识), 不拉起 —— monitor.py 会拒绝启动; 模板见 .monitor.env.example" -f $envPath)
+        return
+    }
     Write-Log ("唤醒: 拉起 monitor ({0})" -f $why)
     Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('"{0}"' -f $batPath) -WindowStyle Hidden
     Start-Sleep -Seconds 6
