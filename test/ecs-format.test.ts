@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { v6 } from "@leichtgewicht/ip-codec";
 import { deriveEcsFromIp, ecsKeyString, parseFixedSubnet } from "../src/ecs";
 
-const CFG = { mode: "auto", ipv4Prefix: 24, ipv6Prefix: 56, fixedSubnet: "" } as const;
+const CFG = { mode: "auto", ipv4Prefix: 24, ipv6Prefix: 56, fixedSubnet: "", fixedSubnetV4: "", fixedSubnetV6: "" } as const;
 
 describe("ECS IPv6 截断格式化", () => {
   const cases: Array<[string, string]> = [

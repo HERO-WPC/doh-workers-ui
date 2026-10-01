@@ -4,7 +4,6 @@ node_modules/
 dist/
 *.log
 .tmp/
-tools/
 .zcode/
 .tmpmonitor-test-pool.txt
 wrangler.jsonc.local
@@ -23,3 +22,27 @@ __pycache__/
 wrangler.jsonc.bak*
 .tmp-*
 全流程开发记录.md
+
+# ---------------------------------------------------------------------------
+# 本地专属(不发布):逆向工程工具 / 抓取产物 / 内部文档。
+# 本仓库 main 会推到 GitHub,这些内容只由本地专属仓库 .git-local 管理
+# (用法见 tools/RECOVERY.md),绝不能被 git add 进本仓库。
+# ---------------------------------------------------------------------------
+itdog/
+kkce/
+tcptest/
+tcping/
+.git-local/
+/*.py
+/*.js
+/public_content*.json
+/tcp_raw.html
+/多站在线测试平台逆向总结.md
+/自定义域名反代优选IP配置方案.md
+
+# 密钥/备份: 绝不允许入库
+.dev.vars.*
+*.bak
+*.bak-*
+tools/.monitor.env
+tools/.monitor.env.local

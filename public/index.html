@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content="noindex, nofollow" />
   <title>DoH Proxy · 控制台</title>
-  <link rel="stylesheet" href="./style.css?v=20260920" />
+  <link rel="stylesheet" href="./style.css?v=20260925" />
 </head>
 <body>
   <!-- 登录层 -->
@@ -174,10 +174,11 @@
             </label>
             <label>IPv4 前缀 <input name="ipv4Prefix" type="number" min="0" max="32" /></label>
             <label>IPv6 前缀 <input name="ipv6Prefix" type="number" min="0" max="128" /></label>
-            <label>固定网段 (CIDR) <input name="fixedSubnet" placeholder="203.0.113.0/24" /></label>
+            <label>固定 IPv4 网段 (CIDR) <input name="fixedSubnetV4" placeholder="203.0.113.0/24" /></label>
+            <label>固定 IPv6 网段 (CIDR) <input name="fixedSubnetV6" placeholder="2001:db8::/48" /></label>
             <div class="form-actions"><button type="submit" class="btn primary">保存</button></div>
           </form>
-          <p class="muted">ECS 开启会按网段碎片化缓存 key 并把粗粒度位置信息发给上游,请确认后再开启。fixed 模式必须提供合法 CIDR。</p>
+          <p class="muted">ECS 开启会按网段碎片化缓存 key 并把粗粒度位置信息发给上游,请确认后再开启。fixed 模式按查询类型自动选网段:<code>A → IPv4 网段</code>、<code>AAAA → IPv6 网段</code>;只填一个则仅对该族注入,留空的一族不注入。</p>
         </div>
       </section>
 
@@ -211,6 +212,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="./app.js?v=20260920"></script>
+  <script src="./app.js?v=20260925"></script>
 </body>
 </html>

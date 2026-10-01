@@ -1,0 +1,50 @@
+# tools/ 的版本控制规则。
+#
+# 本目录现由父仓库 .git 跟踪(随 worker-doh 一起公开),所以这里的规则就是"什么能上公开仓库"。
+#
+# 原则: 只跟踪源码 / 脚本 / 文档;真实"部署标识"、密钥、运行数据、二进制一律不进库。
+#   - 真实 DoH 域名 / DoH 路径 / 面板登录路径 / 被监控域名 -> tools/.monitor.env
+#     源码里只留 "your-" 开头的占位符(模板见 .monitor.env.example)。
+#     monitor.py / daily_test_dns.py 会硬校验: 占位符一律拒绝启动(它们会写 DNS)。
+#
+# 白名单模式:先全部排除,再逐个放行。新脚本要入库必须匹配下面的 !*.py / !*.mjs 等。
+*
+# ---- 私有配置(真实域名 / DoH 路径 / 面板路径 / zone id):必须在放行之前 ----
+.monitor.env
+.monitor.env.local
+.monitor.env.*.local
+
+!.gitignore
+!.gitattributes
+!.monitor.env.example
+!*.py
+!*.mjs
+!*.bat
+!*.ps1
+!*.md
+
+# ---- 密钥 / 凭据 ----
+.cf-token
+.cf-token-*
+.cf-tunnel-token
+monitor-token.txt
+
+# ---- 运行数据 / 二进制 / 日志 ----
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.exe
+*.csv
+*.txt
+
+# ---- 备份 / 残留 / 历史源码 ----
+monitor-recovered.py
+monitor-broken.*
+*.bak
+*.bak-*
+_recovery_backup_*/
+_diagnostics/
+
+# ---- 缓存 ----
+__pycache__/

@@ -62,7 +62,7 @@ describe("race 记账", () => {
       doh: { path: "/aaaaaaaaaaaaaaaa/dns-query" },
       cache: { minTTL: 10, maxTTL: 600, staleTTL: 86400, jitterPercent: 10, maxBody: 65535 },
       routing: { mode: "race", raceCount: 2 },
-      ecs: { mode: "off", ipv4Prefix: 24, ipv6Prefix: 56, fixedSubnet: "" },
+      ecs: { mode: "off", ipv4Prefix: 24, ipv6Prefix: 56, fixedSubnet: "", fixedSubnetV4: "", fixedSubnetV6: "" },
       upstreams: [
         { id: "a", name: "a", url: "https://a.test/dns-query", enabled: true, priority: 1, timeout: 2500 },
         { id: "b", name: "b", url: "https://b.test/dns-query", enabled: true, priority: 2, timeout: 2500 },

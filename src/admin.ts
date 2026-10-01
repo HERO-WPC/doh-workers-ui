@@ -22,7 +22,7 @@ import {
   validateUpstreamInput,
   validateUpstreamUrl,
 } from "./config";
-import { decideEcs, testUpstreamUrl } from "./doh";
+import { testUpstreamUrl } from "./doh";
 import { bareContentType, jsonResponse, methodNotAllowed, textResponse, WORKER_VERSION } from "./httputil";
 import { ensureStatsClock, getMetricsStore, isolateStats, reliabilityOf, scoreOf, statsSnapshot, uptimeSeconds } from "./metrics";
 import { generatePathToken, buildPath } from "./pathgen";
@@ -184,11 +184,12 @@ async function handleAdminApiAuthorized(request: Request, env: Env, ctx: WorkerC
     if (!parsed.ok) return jsonResponse({ error: parsed.error }, 400);
     // 直连所选上游,刻意绕过本机缓存与路由:结果必须可归因到该服务商。
     // 不写缓存、不记 metrics,所以跑测试不影响评分与 KV 写额度。
-    // ECS 按当前配置(off/auto/fixed)由 decideEcs 决定,与线上查询保持一致。
+    // ECS 按当前配置(off/auto/fixed)由 decideEcs 决定,与线上查询保持一致;
     // 测试面板请求本身不带客户端 ECS,所以 clientEcs 传 null。
+    // cfg + clientIp 交给 runResolveTest,由它按每个查询类型独立决定
+    // (A→IPv4 网段、AAAA→IPv6 网段),结果里逐类型回显注入的 ECS。
     const clientIp = request.headers.get("cf-connecting-ip");
-    const ecs = decideEcs(cfg, { clientEcs: null }, clientIp);
-    return jsonResponse(await runResolveTest(parsed.input, { ecs }));
+    return jsonResponse(await runResolveTest(parsed.input, { cfg, clientIp }));
   }
 
   // ---- regenerate path ----

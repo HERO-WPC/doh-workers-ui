@@ -8,7 +8,7 @@
 // anti-pattern this project forbids.
 
 import { generatePathToken, buildPath, isValidDohPath } from "./pathgen";
-import { parseFixedSubnet } from "./ecs";
+import { parseFixedSubnet, parseFixedSubnetV4, parseFixedSubnetV6 } from "./ecs";
 import type { Config, Env, Upstream } from "./types";
 
 export const CONFIG_KV_KEY = "config";
@@ -31,6 +31,8 @@ export const DEFAULTS: Omit<Config, "doh"> & { doh: { path: string } } = {
     ipv4Prefix: 24,
     ipv6Prefix: 56,
     fixedSubnet: "",
+    fixedSubnetV4: "",
+    fixedSubnetV6: "",
   },
   upstreams: [
     { id: "cloudflare", name: "Cloudflare", url: "https://cloudflare-dns.com/dns-query", enabled: true, priority: 1, timeout: 2500 },
@@ -128,8 +130,25 @@ export function parseConfig(raw: unknown): { ok: true; config: Config } | { ok: 
   const mode = routingIn.mode;
   const ecsMode = ecsIn.mode;
   const fixedSubnet = typeof ecsIn.fixedSubnet === "string" ? ecsIn.fixedSubnet.trim() : "";
-  if (ecsMode === "fixed" && !parseFixedSubnet(fixedSubnet)) {
-    return { ok: false, error: "ecs.fixedSubnet must be a valid CIDR like 203.0.113.0/24 when ecs.mode is fixed" };
+  const fixedV4 = typeof ecsIn.fixedSubnetV4 === "string" ? ecsIn.fixedSubnetV4.trim() : "";
+  const fixedV6 = typeof ecsIn.fixedSubnetV6 === "string" ? ecsIn.fixedSubnetV6.trim() : "";
+  if (ecsMode === "fixed") {
+    // 逐字段先报具体格式错误(V4 字段必须是 IPv4、V6 字段必须是 IPv6),最后再报"至少一个网段"。
+    if (fixedSubnet && !parseFixedSubnet(fixedSubnet)) {
+      return { ok: false, error: "ecs.fixedSubnet must be a valid CIDR like 203.0.113.0/24 or 2001:db8::/48 when ecs.mode is fixed" };
+    }
+    if (fixedV4 && !parseFixedSubnetV4(fixedV4)) {
+      return { ok: false, error: "ecs.fixedSubnetV4 must be a valid IPv4 CIDR like 203.0.113.0/24" };
+    }
+    if (fixedV6 && !parseFixedSubnetV6(fixedV6)) {
+      return { ok: false, error: "ecs.fixedSubnetV6 must be a valid IPv6 CIDR like 2001:db8::/48" };
+    }
+    if (!parseFixedSubnet(fixedSubnet) && !parseFixedSubnetV4(fixedV4) && !parseFixedSubnetV6(fixedV6)) {
+      return {
+        ok: false,
+        error: "ecs.fixedSubnet (or fixedSubnetV4/fixedSubnetV6) must be a valid CIDR like 203.0.113.0/24 or 2001:db8::/48 when ecs.mode is fixed",
+      };
+    }
   }
 
   const upstreamsRaw = Array.isArray(raw.upstreams) ? raw.upstreams : null;
@@ -166,6 +185,8 @@ export function parseConfig(raw: unknown): { ok: true; config: Config } | { ok: 
       ipv4Prefix: clampInt(ecsIn.ipv4Prefix, 0, 32, DEFAULTS.ecs.ipv4Prefix),
       ipv6Prefix: clampInt(ecsIn.ipv6Prefix, 0, 128, DEFAULTS.ecs.ipv6Prefix),
       fixedSubnet,
+      fixedSubnetV4: fixedV4,
+      fixedSubnetV6: fixedV6,
     },
     upstreams,
   };

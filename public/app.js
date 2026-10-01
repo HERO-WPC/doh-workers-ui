@@ -401,11 +401,8 @@
 
   function renderResolveResult(r) {
     el("resolve-result-card").classList.remove("hidden");
-    const ecsNote = r.ecs
-      ? ` · ECS <code>${escapeHtml(String(r.ecs.family) + "/" + r.ecs.sourcePrefix + ":" + r.ecs.address)}</code>`
-      : " · ECS off";
     el("resolve-result-title").innerHTML =
-      `查询结果 <span class="muted small-note">${escapeHtml(r.name)} · ${escapeHtml(r.provider.name)} · <code>${escapeHtml(r.provider.url)}</code>${ecsNote}</span>`;
+      `查询结果 <span class="muted small-note">${escapeHtml(r.name)} · ${escapeHtml(r.provider.name)} · <code>${escapeHtml(r.provider.url)}</code></span>`;
     el("resolve-results").innerHTML = r.results.map(resolveBlock).join("");
   }
 
@@ -416,7 +413,11 @@
   }
 
   function resolveBlock(res) {
-    const head = `<div class="resolve-head"><span class="badge gray">${escapeHtml(res.type)}</span>${resolveStatusBadge(res)}</div>`;
+    // 每个类型显示它实际注入的 ECS(A→IPv4 网段、AAAA→IPv6 网段,可能不同)。
+    const ecsNote = res.ecs
+      ? `<span class="badge gray">ECS ${escapeHtml(String(res.ecs.family) + "/" + res.ecs.sourcePrefix + ":" + res.ecs.address)}</span>`
+      : "";
+    const head = `<div class="resolve-head"><span class="badge gray">${escapeHtml(res.type)}</span>${resolveStatusBadge(res)}${ecsNote}</div>`;
 
     if (!res.ok) {
       const why = res.timedOut ? "超时" : res.error || "查询失败";
@@ -488,7 +489,11 @@
     f.mode.value = cfg.ecs.mode;
     f.ipv4Prefix.value = cfg.ecs.ipv4Prefix;
     f.ipv6Prefix.value = cfg.ecs.ipv6Prefix;
-    f.fixedSubnet.value = cfg.ecs.fixedSubnet;
+    // 旧配置的单个 fixedSubnet 回填到对应族输入框,方便原地平滑迁移。
+    const legacy = (cfg.ecs.fixedSubnet || "").trim();
+    const legacyIsV6 = legacy.includes(":");
+    f.fixedSubnetV4.value = (cfg.ecs.fixedSubnetV4 || (legacyIsV6 ? "" : legacy)).trim();
+    f.fixedSubnetV6.value = (cfg.ecs.fixedSubnetV6 || (legacyIsV6 ? legacy : "")).trim();
   }
 
   el("ecs-form").addEventListener("submit", async (e) => {
@@ -500,7 +505,9 @@
           mode: f.mode.value,
           ipv4Prefix: Number(f.ipv4Prefix.value),
           ipv6Prefix: Number(f.ipv6Prefix.value),
-          fixedSubnet: f.fixedSubnet.value.trim(),
+          fixedSubnet: "", // 迁移到分网段字段后清空旧单值,避免双重生效
+          fixedSubnetV4: f.fixedSubnetV4.value.trim(),
+          fixedSubnetV6: f.fixedSubnetV6.value.trim(),
         },
       });
       toast("ECS 配置已保存");

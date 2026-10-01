@@ -11,7 +11,7 @@
 // 任何 KV 写入(每次调用只消耗 1-2 个上游请求)。
 
 import { buildUpstreamQuery, type DnsRecord } from "./dnsmsg";
-import type { EcsSpec } from "./ecs";
+import { decideEcs, type EcsSpec } from "./ecs";
 import { normalizeQType, renderRdata, validateQueryName } from "./jsonapi";
 import { queryUpstream, type FetchLike } from "./upstream";
 import type { Config, Upstream } from "./types";
@@ -35,6 +35,8 @@ export interface ResolveTypeResult {
   type: ResolveTestType;
   /** false 表示传输/校验层失败(与 DNS 层的 rcode 错误区分开)。 */
   ok: boolean;
+  /** 该类型本次实际注入的 ECS(如 "1/24:223.66.196.0"),off 时为 null。 */
+  ecs?: EcsSpec | null;
   /** 有效 rcode(含 EDNS 扩展高 8 位)。仅 ok=true 时存在。 */
   status?: number;
   statusText?: string;
@@ -159,14 +161,29 @@ function rrList(records: DnsRecord[] | undefined): ResolveRecord[] {
  * 配置的 ecs.mode 用 decideEcs 算出来。这样解析测试与线上查询/当前 ECS
  * 设置保持一致 —— 用户改完 ECS 面板后,测试看到的正是该网段视角的答案。
  */
+/**
+ * 决定本次测试查询注入的 ECS:显式 opts.ecs 优先(测试/透传用);
+ * 否则按当前配置用 decideEcs 计算 —— cfg + clientIp 由 admin 传入,
+ * A→IPv4 网段、AAAA→IPv6 网段,与线上查询/当前 ECS 设置保持一致。
+ */
+function resolveTestEcs(
+  type: ResolveTestType,
+  opts: { ecs?: EcsSpec | null; cfg?: Config; clientIp?: string | null },
+): EcsSpec | null {
+  if (opts.ecs !== undefined) return opts.ecs ?? null;
+  if (opts.cfg) return decideEcs(opts.cfg, { clientEcs: null, qtype: type }, opts.clientIp ?? null);
+  return null;
+}
+
 export async function queryOneType(
   upstream: Upstream,
   name: string,
   type: ResolveTestType,
-  opts: { fetchImpl?: FetchLike; ecs?: EcsSpec | null } = {},
+  opts: { fetchImpl?: FetchLike; ecs?: EcsSpec | null; cfg?: Config; clientIp?: string | null } = {},
 ): Promise<ResolveTypeResult> {
-  // 随机 TXID + RD=1,不带 EDNS DO;是否带 ECS 由 opts.ecs 决定。
-  const wire = buildUpstreamQuery({ qname: name, qtype: type, qclass: "IN", cd: false, do: false }, opts.ecs ?? null);
+  const ecs = resolveTestEcs(type, opts);
+  // 随机 TXID + RD=1,不带 EDNS DO;是否带 ECS 由 ecs 决定。
+  const wire = buildUpstreamQuery({ qname: name, qtype: type, qclass: "IN", cd: false, do: false }, ecs);
 
   const attempt = await queryUpstream(
     upstream,
@@ -191,6 +208,7 @@ export async function queryOneType(
   const result: ResolveTypeResult = {
     type,
     ok: true,
+    ecs,
     status: answer.rcode,
     statusText: rcodeText(answer.rcode),
   };
@@ -204,10 +222,12 @@ export async function queryOneType(
 /** 跑一次解析测试:并行为每个类型直连所选上游查询一次。 */
 export async function runResolveTest(
   input: ResolveTestInput,
-  opts: { fetchImpl?: FetchLike; ecs?: EcsSpec | null } = {},
+  opts: { fetchImpl?: FetchLike; ecs?: EcsSpec | null; cfg?: Config; clientIp?: string | null } = {},
 ): Promise<ResolveTestResult> {
-  const ecs = opts.ecs ?? null;
-  const results = await Promise.all(input.types.map((t) => queryOneType(input.upstream, input.name, t, { fetchImpl: opts.fetchImpl, ecs })));
+  const results = await Promise.all(
+    input.types.map((t) => queryOneType(input.upstream, input.name, t, { fetchImpl: opts.fetchImpl, ecs: opts.ecs, cfg: opts.cfg, clientIp: opts.clientIp })),
+  );
+  const firstEcs = results.find((r) => r.ok)?.ecs ?? null;
   return {
     name: input.name,
     provider: {
@@ -216,7 +236,9 @@ export async function runResolveTest(
       url: input.upstream.url,
       enabled: input.upstream.enabled,
     },
-    ecs,
+    // 顶层回显:显式传入的 ecs 优先;cfg 驱动时取第一个成功类型的实际 ECS 作代表。
+    // 每个类型真实的注入结果在 results[i].ecs(family 感知,A/AAAA 可能不同)。
+    ecs: opts.ecs !== undefined ? (opts.ecs ?? null) : firstEcs,
     results,
   };
 }

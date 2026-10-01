@@ -7,7 +7,7 @@
 // and truncates the address bytes for us; we do our own parsing/truncation so
 // behavior is testable and independent of upstream versions.
 
-import type { EcsConfig } from "./types";
+import type { Config, EcsConfig } from "./types";
 
 export interface EcsSpec {
   family: 1 | 2;
@@ -187,6 +187,71 @@ export function parseFixedSubnet(subnet: string): EcsSpec | null {
   const prefix = Number(subnet.slice(slash + 1).trim());
   const family: 1 | 2 = addr.includes(":") ? 2 : 1;
   return makeSpec(family, addr, prefix);
+}
+
+/** Like parseFixedSubnet, but only accepts an IPv4 CIDR (family-aware config). */
+export function parseFixedSubnetV4(subnet: string): EcsSpec | null {
+  const spec = parseFixedSubnet(subnet);
+  return spec && spec.family === 1 ? spec : null;
+}
+
+/** Like parseFixedSubnet, but only accepts an IPv6 CIDR (family-aware config). */
+export function parseFixedSubnetV6(subnet: string): EcsSpec | null {
+  const spec = parseFixedSubnet(subnet);
+  return spec && spec.family === 2 ? spec : null;
+}
+
+/** Address family a query type targets: "A"→1 (IPv4), "AAAA"→2 (IPv6), else null. */
+export function familyOfQtype(qtype: string | null | undefined): 1 | 2 | null {
+  const t = String(qtype ?? "").toUpperCase();
+  if (t === "A") return 1;
+  if (t === "AAAA") return 2;
+  return null;
+}
+
+export interface DecideEcsQuery {
+  clientEcs: EcsSpec | null;
+  /** Lowercased qtype name, e.g. "a" / "aaaa" -> family selection in fixed mode. */
+  qtype?: string | null;
+}
+
+/**
+ * ECS policy for one query.
+ *
+ * - off: no ECS injected.
+ * - fixed: if BOTH family-specific subnets (fixedSubnetV4/V6) are empty, the
+ *   legacy single fixedSubnet is used as-is for every query (old behavior).
+ *   Otherwise the subnet is chosen per address family: a client-provided ECS
+ *   family wins, else the queried type's family (A→IPv4, AAAA→IPv6), else the
+ *   first available of v4/v6.
+ * - auto: clamp a client-provided ECS to our coarse prefix, or derive a
+ *   privacy-truncated subnet from the client IP.
+ */
+export function decideEcs(cfg: Config, q: DecideEcsQuery, clientIp: string | null): EcsSpec | null {
+  switch (cfg.ecs.mode) {
+    case "off":
+      return null;
+    case "fixed": {
+      const legacy = parseFixedSubnet(cfg.ecs.fixedSubnet);
+      const v4 = parseFixedSubnetV4(cfg.ecs.fixedSubnetV4);
+      const v6 = parseFixedSubnetV6(cfg.ecs.fixedSubnetV6);
+      // 旧配置没有分网段字段:保持"一个固定网段对所有查询生效"的原有行为。
+      if (!v4 && !v6) return legacy;
+      const family = q.clientEcs?.family ?? familyOfQtype(q.qtype);
+      if (family === 1) return v4 ?? (legacy?.family === 1 ? legacy : null);
+      if (family === 2) return v6 ?? (legacy?.family === 2 ? legacy : null);
+      return v4 ?? v6 ?? legacy;
+    }
+    case "auto": {
+      if (q.clientEcs) {
+        // Clamp a client-provided prefix to at most our configured
+        // granularity so cache keys stay coarse.
+        const max = q.clientEcs.family === 1 ? cfg.ecs.ipv4Prefix : cfg.ecs.ipv6Prefix;
+        return withPrefix(q.clientEcs, max) ?? q.clientEcs;
+      }
+      return clientIp ? deriveEcsFromIp(clientIp, cfg.ecs) : null;
+    }
+  }
 }
 
 /** Canonical string used inside the cache key; ECS always participates. */

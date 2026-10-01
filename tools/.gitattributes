@@ -1,0 +1,8 @@
+# 这些是 Windows/POSIX 混用的脚本(Windows 运行,但从 Linux 备机同步),
+# 统一按 LF 存取,避免 autocrlf 在检出时改写文件。
+* text=auto eol=lf
+
+# 例外:.bat 必须是 CRLF。
+# cmd.exe 对 LF-only 的批处理(尤其是 if(...) 块)解析不可靠,而且它按 OEM
+# 代码页读取文件 —— 所以 .bat 还要保持纯 ASCII。见 monitor-start.bat 顶部注释。
+*.bat text eol=crlf

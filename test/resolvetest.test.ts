@@ -245,6 +245,39 @@ describe("queryOneType", () => {
   });
 });
 
+describe("cfg 驱动的 family 感知 ECS", () => {
+  const cfg: Config = {
+    ...m.config.generateDefaultConfig(),
+    ecs: {
+      mode: "fixed",
+      ipv4Prefix: 24,
+      ipv6Prefix: 56,
+      fixedSubnet: "",
+      fixedSubnetV4: "203.0.113.0/24",
+      fixedSubnetV6: "2001:db8::/48",
+    },
+  };
+
+  it("A 用 IPv4 网段、AAAA 用 IPv6 网段,并在结果里回显", async () => {
+    const fetchImpl = typeAwareFetch({}, []);
+    const a = await m.resolvetest.queryOneType(up(), "example.com", "A", { fetchImpl, cfg });
+    const aaaa = await m.resolvetest.queryOneType(up(), "example.com", "AAAA", { fetchImpl, cfg });
+    expect(a.ecs).toMatchObject({ family: 1, sourcePrefix: 24, address: "203.0.113.0" });
+    expect(aaaa.ecs).toMatchObject({ family: 2, sourcePrefix: 48, address: "2001:db8::" });
+  });
+
+  it("runResolveTest 对 A/AAAA 分别注入不同族的 ECS", async () => {
+    let seen: string[] = [];
+    const r = await m.resolvetest.runResolveTest(
+      { name: "example.com", upstream: up(), types: ["A", "AAAA"] },
+      { fetchImpl: typeAwareFetch({}, seen), cfg },
+    );
+    const [a, aaaa] = r.results;
+    expect(a.ecs?.family).toBe(1);
+    expect(aaaa.ecs?.family).toBe(2);
+  });
+});
+
 describe("runResolveTest", () => {
   it("并行查询两个类型,返回 provider 元信息", async () => {
     const seen: string[] = [];

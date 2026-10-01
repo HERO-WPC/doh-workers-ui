@@ -261,7 +261,7 @@ fresh 过期但仍在 `staleTTL`(默认 86400s)内:立即返回旧值并 `waitUn
 |---|---|
 | `off`(默认) | 剥离客户端 ECS,不注入。缓存 key 统一,命中率最大 |
 | `auto` | 从 `CF-Connecting-IP` 截断派生(IPv4 /24、IPv6 /56,可配)注入;客户端自带 ECS 时钳制到不超过配置粒度 |
-| `fixed` | 注入管理员固定网段(如 `203.0.113.0/24`) |
+| `fixed` | 注入管理员固定网段。支持同时配置 IPv4(`fixedSubnetV4`)与 IPv6(`fixedSubnetV6`)两个网段,按查询类型自动选:`A → IPv4 网段`、`AAAA → IPv6 网段`;只填一个则仅对该族注入,留空的一族不注入。未配置分网段时沿用旧 `fixedSubnet`(单网段对所有查询生效,向后兼容) |
 
 ECS 永远参与 cache key,绝不出现"带 ECS 的答案被无 ECS 请求命中"。默认关闭的理由(ECS 碎片化缓存 + 泄露粗粒度位置)见 ARCHITECTURE.md §3.4。
 
@@ -302,7 +302,7 @@ ECS 永远参与 cache key,绝不出现"带 ECS 的答案被无 ECS 请求命中
   "doh":    { "path": "/8f7c2d91e43ab67f/dns-query" },
   "cache":  { "minTTL": 10, "maxTTL": 600, "staleTTL": 86400, "jitterPercent": 10, "maxBody": 65535 },
   "routing":{ "mode": "adaptive", "raceCount": 2 },
-  "ecs":    { "mode": "off", "ipv4Prefix": 24, "ipv6Prefix": 56, "fixedSubnet": "" },
+  "ecs":    { "mode": "off", "ipv4Prefix": 24, "ipv6Prefix": 56, "fixedSubnet": "", "fixedSubnetV4": "", "fixedSubnetV6": "" },
   "upstreams": [
     { "id": "cloudflare", "name": "Cloudflare", "url": "https://cloudflare-dns.com/dns-query", "enabled": true, "priority": 1, "timeout": 2500 },
     { "id": "google",     "name": "Google",     "url": "https://dns.google/dns-query",         "enabled": true, "priority": 2, "timeout": 2500 }

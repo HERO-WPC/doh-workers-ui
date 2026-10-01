@@ -32,7 +32,7 @@ function makeConfig(overrides: Partial<Config["routing"]> = {}, upstreams = [ups
     doh: { path: "/aaaaaaaaaaaaaaaa/dns-query" },
     cache: { minTTL: 10, maxTTL: 600, staleTTL: 86400, jitterPercent: 10, maxBody: 65535 },
     routing: { mode: "sequential", raceCount: 2, ...overrides },
-    ecs: { mode: "off", ipv4Prefix: 24, ipv6Prefix: 56, fixedSubnet: "" },
+    ecs: { mode: "off", ipv4Prefix: 24, ipv6Prefix: 56, fixedSubnet: "", fixedSubnetV4: "", fixedSubnetV6: "" },
     upstreams,
   };
 }

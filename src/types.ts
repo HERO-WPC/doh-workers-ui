@@ -32,8 +32,12 @@ export interface EcsConfig {
   mode: EcsMode;
   ipv4Prefix: number;
   ipv6Prefix: number;
-  /** CIDR used when mode === "fixed", e.g. "203.0.113.0/24". */
+  /** Legacy single CIDR used when mode === "fixed" (either family). Kept for backward compat. */
   fixedSubnet: string;
+  /** Fixed IPv4 CIDR used when mode === "fixed", e.g. "203.0.113.0/24". */
+  fixedSubnetV4: string;
+  /** Fixed IPv6 CIDR used when mode === "fixed", e.g. "2001:db8::/48". */
+  fixedSubnetV6: string;
 }
 
 export interface DohConfig {

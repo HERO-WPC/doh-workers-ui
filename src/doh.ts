@@ -25,7 +25,7 @@ import {
   withTxid,
   type ParsedClientQuery,
 } from "./dnsmsg";
-import { deriveEcsFromIp, parseFixedSubnet, withPrefix, type EcsSpec } from "./ecs";
+import { decideEcs, type EcsSpec } from "./ecs";
 import { DNS_CONTENT_TYPE, DOH_CORS_HEADERS, bareContentType, jsonResponse, textResponse } from "./httputil";
 import { buildQueryFromName, normalizeQType, validateQueryName, wantsJson, wireToJson } from "./jsonapi";
 import { ensureStatsClock, getMetricsStore, isolateStats } from "./metrics";
@@ -132,26 +132,8 @@ async function extractDohInput(request: Request, cfg: Config): Promise<{ ok: tru
 }
 
 // ---------------------------------------------------------------------------
-// ECS policy
+// ECS policy (see decideEcs in ./ecs for the family-aware fixed-mode logic)
 // ---------------------------------------------------------------------------
-
-export function decideEcs(cfg: Config, q: Pick<ParsedClientQuery, "clientEcs">, clientIp: string | null): EcsSpec | null {
-  switch (cfg.ecs.mode) {
-    case "off":
-      return null;
-    case "fixed":
-      return parseFixedSubnet(cfg.ecs.fixedSubnet);
-    case "auto": {
-      if (q.clientEcs) {
-        // Clamp a client-provided prefix to at most our configured
-        // granularity so cache keys stay coarse.
-        const max = q.clientEcs.family === 1 ? cfg.ecs.ipv4Prefix : cfg.ecs.ipv6Prefix;
-        return withPrefix(q.clientEcs, max) ?? q.clientEcs;
-      }
-      return clientIp ? deriveEcsFromIp(clientIp, cfg.ecs) : null;
-    }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // TTL & storage policy
