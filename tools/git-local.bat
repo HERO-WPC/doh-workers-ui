@@ -35,9 +35,11 @@ if /i "%~1"=="add" (
     echo             do NOT pass "." or -A: it would stage the db and secrets
     exit /b 2
   )
-  rem -f is required (the main .gitignore already marks these files ignored), but a
-  rem forced add also drags in __pycache__/*.pyc, so exclude them via negative pathspecs.
-  git --git-dir="%GITDIR%" --work-tree="%REPO%" add -f %2 %3 %4 %5 %6 %7 %8 %9 -- ":!*/__pycache__/*" ":!*.pyc"
+  rem -f is required: the main .gitignore already marks these files ignored, and
+  rem ignore rules can only be added, never overridden. A forced add also drags in
+  rem __pycache__/*.pyc, so unstage those right after (empty match is fine).
+  git --git-dir="%GITDIR%" --work-tree="%REPO%" add -f %2 %3 %4 %5 %6 %7 %8 %9
+  git --git-dir="%GITDIR%" --work-tree="%REPO%" rm -r --cached --quiet --ignore-unmatch -- "*/__pycache__/*"
 ) else (
   git --git-dir="%GITDIR%" --work-tree="%REPO%" -c core.quotepath=false %*
 )
