@@ -35,7 +35,9 @@ if /i "%~1"=="add" (
     echo             do NOT pass "." or -A: it would stage the db and secrets
     exit /b 2
   )
-  git --git-dir="%GITDIR%" --work-tree="%REPO%" add -f %2 %3 %4 %5 %6 %7 %8 %9
+  rem -f is required (the main .gitignore already marks these files ignored), but a
+  rem forced add also drags in __pycache__/*.pyc, so exclude them via negative pathspecs.
+  git --git-dir="%GITDIR%" --work-tree="%REPO%" add -f %2 %3 %4 %5 %6 %7 %8 %9 -- ":!*/__pycache__/*" ":!*.pyc"
 ) else (
   git --git-dir="%GITDIR%" --work-tree="%REPO%" -c core.quotepath=false %*
 )
