@@ -1,0 +1,11 @@
+[Unit]
+Description=每 5 分钟检查一次 DoH monitor(doh-monitor-watchdog.service)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=10s
+Unit=doh-monitor-watchdog.service
+
+[Install]
+WantedBy=timers.target

@@ -149,3 +149,80 @@ cmd /c "tools\monitor-start.bat"
     schtasks /create /tn doh-monitor-watchdog /xml $env:TEMP\wd-new.xml /f
     ```
   - 缺 `tools/.monitor.env` 时看门狗会记一行原因并**拒绝拉起**（避免每 5 分钟空转失败）。
+
+## 9. Linux（Arch）部署 —— 2026-10-07 已实际迁移过一次
+
+`monitor.py` 本身没有任何 Windows 调用，跨平台；要换的只是"运维外壳"。
+
+### 9.1 现役部署（Arch 备机：`<备机 IP>`，用户 `<用户名>`，仓库 `~/doh-workers-ui`）
+
+| 组件 | 位置 | 说明 |
+|---|---|---|
+| monitor 服务 | `/etc/systemd/system/doh-monitor.service` | `User=<用户名>`，`ExecStart=tools/linux/start-monitor.sh`；`Restart=on-failure`；**`KillSignal=SIGINT`**（走 Ctrl+C 路径 → 正常关闭并合并 SQLite WAL） |
+| 看门狗 | `doh-monitor-watchdog.service` + `.timer` | 每 5 分钟跑 `tools/linux/watchdog.py`（**User=root**，因为要 `systemctl restart`）；逻辑与 Windows 的 ps1 一致：进程/端口/HTTP 三级判据，连续 3 次异常才重启 |
+| 隧道 | `/etc/systemd/system/cloudflared.service` | `cloudflared service install <token>`，token 取自 `tools/.cf-tunnel-token`；对外域名 `<面板域名>`（隧道 CNAME，见 CF zone） |
+| 启动参数 | `tools/linux/start-monitor.sh` | 等价于 Windows 的 `monitor-start.bat`（真实域名等仍在 `tools/.monitor.env`，不在命令行） |
+
+安装 / 卸载：
+
+```bash
+bash tools/linux/install.sh              # 装单元 + 开机自启（需要 sudo，会提示密码）
+bash tools/linux/install.sh --no-start   # 只装文件
+bash tools/linux/install.sh --uninstall
+# SSH 里没有 TTY 时用: SUDO_PW='...' bash tools/linux/install.sh
+
+sudo systemctl restart doh-monitor        # 改完 start-monitor.sh 后
+journalctl -u doh-monitor -f              # 实时日志(也可以 tail -f tools/monitor.log)
+systemctl list-timers doh-monitor-watchdog.timer
+```
+
+### 9.2 从 Windows 搬一台新机器（本次实操过的流程）
+
+1. **先停旧的 monitor**，否则两边会抢同一批 DNS A 记录：
+   ```powershell
+   Stop-Process -Id <monitor PID> -Force
+   schtasks /change /tn doh-monitor-watchdog /disable      # 否则 5 分钟后又被拉起
+   ```
+2. **合并 SQLite WAL**（强杀进程后遗留，直接拷会不一致；也可拷 `.db` + `-wal` + `-shm` 三个一起）：
+   ```powershell
+   python -c "import sqlite3;c=sqlite3.connect(r'tools\monitor.db');print(c.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone());c.execute('PRAGMA journal_mode=DELETE');c.close()"
+   ```
+3. **打包**（`node_modules` / `cloudflared.exe` / db 备份 / `.tmp` / 测试抓包都不必带）：
+   ```powershell
+   cd D:\桌面
+   tar -czf doh-migrate.tgz `
+     --exclude=doh-workers-ui/node_modules --exclude=doh-workers-ui/.wrangler `
+     --exclude=doh-workers-ui/.tmp --exclude=doh-workers-ui/tools/cloudflared.exe `
+     --exclude=doh-workers-ui/tools/monitor.db.bak-* --exclude=doh-workers-ui/tools/monitor-stdout.log `
+     --exclude=doh-workers-ui/kkce/saved/mtr-*.json --exclude=*/__pycache__ doh-workers-ui
+   ```
+   → 实测 27 MB（完整目录 642 MB，其中 node_modules 227 MB、cloudflared.exe 52 MB）。
+4. **传过去解包**（`scp`/SFTP 均可），然后：
+   ```bash
+   cd ~/doh-workers-ui
+   git checkout -- .            # 消掉 CRLF/LF 噪声(根目录没有 .gitattributes, 只有 tools/ 有)
+   python3 tools/monitor.py --check-env        # 私有配置自检, 必须先过
+   SUDO_PW='...' bash tools/linux/install.sh   # 装服务
+   ```
+5. **隧道**：`sudo cloudflared service install "$(cat tools/.cf-tunnel-token)"`，然后
+   `curl "https://<面板域名>/api/best?n=1&key=$(cat tools/monitor-token.txt)"`
+   看返回的 `pid` 是不是新机器上的 monitor PID。
+6. **退役旧机器**（管理员 PowerShell）：
+   ```powershell
+   Stop-Service Cloudflared -Force; Set-Service Cloudflared -StartupType Disabled
+   # 本机 monitor 保持停止 + doh-monitor-watchdog 保持 Disabled
+   ```
+
+### 9.3 换机时容易踩的坑
+
+- **`.git-local` 没有 remote**：只 clone GitHub 会丢掉 itdog/kkce/tcptest/tcping 和内部文档 →
+  用 `git bundle` 或整目录打包带走（全量 tar 天然包含它）。
+- **`tools/.proxy`**：Windows 上指向本机 SOCKS5（`127.0.0.1:10808`）作 CF API 回落。
+  新机器没有这个代理就把文件改名（`tools/.proxy.from-windows`）留档；`monitor.py` 与
+  `daily_test_dns.py` 都是"**直连优先，配了代理才回落**"，没代理也能跑。
+- **`cloudflared.exe` 不能带走**：Arch 上 `pacman -S cloudflared`（本次实测已预装）。
+- **`node_modules` 不能带走**：含 Windows 原生二进制，`npm i` 重装。
+- **Python 依赖只有 `websockets`**（Arch: `pacman -S python-websockets`），其余全是标准库；
+  语法只需 3.8+。
+- **别两边同时跑 monitor**（同一域名 A 记录会被互相覆盖）；也**别让两个 cloudflared 连接器
+  指向不同后端**（一个转发到已停的 8080 会导致面板时好时坏）。

@@ -1,0 +1,24 @@
+[Unit]
+Description=DoH 优选 IP 监控 (tools/monitor.py)
+Documentation=file://@REPO@/tools/RECOVERY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@USER@
+WorkingDirectory=@REPO@
+ExecStart=@REPO@/tools/linux/start-monitor.sh
+# 崩溃/异常退出自动重启; "进程活着但卡死"由 doh-monitor-watchdog.timer 负责
+Restart=on-failure
+RestartSec=15
+# SIGINT = monitor.py 的 Ctrl+C 路径 -> 正常关闭并 checkpoint SQLite WAL
+KillSignal=SIGINT
+TimeoutStopSec=40
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=doh-monitor
+
+[Install]
+WantedBy=multi-user.target

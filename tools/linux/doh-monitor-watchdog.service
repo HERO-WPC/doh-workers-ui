@@ -1,0 +1,8 @@
+[Unit]
+Description=DoH monitor 看门狗(单次检查)
+After=doh-monitor.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 @REPO@/tools/linux/watchdog.py

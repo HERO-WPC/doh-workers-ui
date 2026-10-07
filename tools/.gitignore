@@ -24,6 +24,14 @@
 !*.vbs
 !*.md
 
+# Linux 运维层(tools/linux/: systemd 单元 + 启动/看门狗脚本)
+# 注意: 必须先放行"目录"本身 —— 被 `*` 排除的目录里, 文件无法被单独重新包含
+# (gitignore 的硬规则)。漏了这行会导致 tools/linux/ 整个目录静默不入库。
+!linux/
+!*.sh
+!*.service
+!*.timer
+
 # ---- 密钥 / 凭据 ----
 .cf-token
 .cf-token-*

@@ -125,9 +125,35 @@ def _read_tok():
                     return line.split("=", 1)[1].strip()
     raise RuntimeError("no token")
 
-PROXY = ("127.0.0.1", 10808)
+def _proxy_addr():
+    """CF API 的 SOCKS5 回落地址: MONITOR_PROXY 环境变量 或 tools/.proxy; 未配置=None。
+
+    与 monitor.py 同一约定。**未配置 = 纯直连** —— 这样脚本挪到没有本机代理的机器
+    (例如 Linux 备机)上也能跑。原先这里是硬编码 ("127.0.0.1", 10808), 换机即失效。
+    """
+    raw = os.environ.get("MONITOR_PROXY", "").strip()
+    if not raw:
+        p = os.path.join(TOOLS_DIR, ".proxy")
+        if os.path.exists(p):
+            try:
+                raw = open(p, encoding="utf-8").read().strip()
+            except OSError:
+                raw = ""
+    if not raw:
+        return None
+    raw = raw.split("://")[-1]
+    if ":" not in raw:
+        return None
+    host, _, port = raw.rpartition(":")
+    try:
+        return (host.strip("[]") or "127.0.0.1", int(port))
+    except ValueError:
+        return None
+
+
+PROXY = _proxy_addr()
 class S5C(http.client.HTTPSConnection):
-    def __init__(self, *a, **k): self.proxy = PROXY; super().__init__(*a, **k)
+    def __init__(self, *a, **k): self.proxy = PROXY or ("127.0.0.1", 10808); super().__init__(*a, **k)
     def connect(self):
         s = socket.create_connection(self.proxy, timeout=12)
         try:
@@ -146,17 +172,30 @@ TOK = _read_tok()
 TLS_CTX = ssl.create_default_context()
 TLS_CTX.check_hostname = False; TLS_CTX.verify_mode = ssl.CERT_NONE
 
+def _open_direct(req):
+    return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=30)
+
+
+def _open_via_proxy(req):
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), S5H()).open(req, timeout=30)
+
+
 def cf_api(method, path, body=None):
     data = json.dumps(body).encode() if body is not None else None
-    op = urllib.request.build_opener(urllib.request.ProxyHandler({}), S5H())
     req = urllib.request.Request("https://api.cloudflare.com/client/v4"+path, data=data,
         headers={"Authorization": "Bearer "+TOK, "Content-Type": "application/json"}, method=method)
-    try:
-        with op.open(req, timeout=30) as r: return r.status, json.load(r)
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read().decode("utf-8", "replace") or "{}")
-    except Exception as e:
-        return None, {"error": repr(e)}
+    # 直连优先; 仅在"配了代理 且 直连失败"时回落(与 monitor.py 同一策略)
+    attempts = [_open_direct] + ([_open_via_proxy] if PROXY else [])
+    last = None
+    for fn in attempts:
+        try:
+            with fn(req) as r:
+                return r.status, json.load(r)
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read().decode("utf-8", "replace") or "{}")
+        except Exception as e:
+            last = e
+    return None, {"error": repr(last)}
 
 # ---------- monitor /api/best ----------
 def best_candidates(n):
