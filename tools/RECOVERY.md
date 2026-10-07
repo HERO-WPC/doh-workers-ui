@@ -226,3 +226,47 @@ systemctl list-timers doh-monitor-watchdog.timer
   语法只需 3.8+。
 - **别两边同时跑 monitor**（同一域名 A 记录会被互相覆盖）；也**别让两个 cloudflared 连接器
   指向不同后端**（一个转发到已停的 8080 会导致面板时好时坏）。
+
+## 10. 多机热备拓扑（2026-10-07 现状：主=Arch / 备=Ubuntu / Windows 退役）
+
+| 角色 | 主机 | 跑什么 | DNS 写权 |
+|---|---|---|---|
+| **主监控** | Arch `<主监控 IP>` | `doh-monitor.service`(8080) + `doh-monitor-watchdog.timer` + `cloudflared.service`(面板 `<面板域名>`) | ✅ 有（未配 `--peer-health-url`） |
+| **热备监控** | Ubuntu `<热备 IP>`（root，独立部署在 `/opt/doh-monitor/`） | `doh-monitor.service`(8081) + `doh-watchdog.service` + 自己的 cloudflared | ❌ **让出**：对端在线时"仅探测"，对端不可达才接管写 DNS |
+| 已退役 | Windows `<旧主机 IP>` | monitor / 看门狗任务 / Cloudflared 全部停止 + 禁用 | ❌ |
+
+### `--peer-health-url` 的语义（`monitor.py` L945-962）
+
+- 对端**任何 HTTP 应答（含 401）**即判定在线 → `_yield_to_peer()` 返回 True，
+  **跳过所有 DNS 写入**（只探测），并记一行 `[peer] 主监控机在线,本机让出 DNS 写权(仅探测)`；
+- 对端不可达 → 备机**自动接管**写 DNS；
+- 热备机上配置，例如：
+  `--peer-health-url http://<主监控 IP>:8080/api/stats?key=<面板 key>`
+
+> ⚠️ **换主/换备时必须同步这条 URL**，否则两台会同时写 DNS。
+> 本次迁移就踩到了：热备原本监视 Windows，Windows 一停它就判定对端掉线、立刻开始全量复测
+> （按它自己的 `--count 5` 准备改写记录），而 Arch 同时也在写 → 记录数在两个值之间来回。
+> 处理：把热备的对端改成新主（Arch），它随即回到"让出"状态。
+
+### 热备机（Ubuntu）上的坑
+
+- **独立部署**：`/opt/doh-monitor/`（`monitor.py` 是 2026-09-19 的旧版，真实域名/DoH 路径
+  **硬编码在代码里**，没有 `.monitor.env`），有**自己的** `.cf-token`、`monitor-token.txt`、
+  `monitor.db`、`ips-latest.csv`、`ips-candidates.txt`。
+- 面板端口 **8081**（主机是 8080），key 与主机一致。
+- 默认 `--count` 是 **5**，与主机 8 不一致 → 已补 `--count 8`（只在它接管时生效）。
+- 它的 `doh-monitor.service` 是 `disabled`（开机不自启）：想让热备重启后仍生效需
+  `systemctl enable doh-monitor`。
+- 换主时同时检查它的 `doh-watchdog.service`（`/opt/doh-monitor/watchdog.sh`）是否在跑。
+
+### 常用检查命令
+
+```bash
+# 备机在"让出"还是已"接管"?
+grep '\[peer\]' /opt/doh-monitor/monitor.log | tail -3
+# 备机 -> 主监控 的可达性(200 = 正常; 401 也算在线但说明 key 不对)
+curl -s -o /dev/null -w '%{http_code}\n' "http://<主监控 IP>:8080/api/stats?key=<面板 key>"
+# 换主: 改对端并重启备机
+sed -i 's|<旧主 IP>|<新主 IP>|' /etc/systemd/system/doh-monitor.service
+systemctl daemon-reload && systemctl restart doh-monitor.service
+```
